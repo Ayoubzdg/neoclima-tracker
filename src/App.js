@@ -184,13 +184,20 @@ function PlanViewer({zone,role,onZTClick,onNewZT,activeStatuses,equipes,pushToas
   },[zone && zone.plan_url]);
 
   const renderPage=(pdf,pageNum)=>{
-    if(!pdf||!canvasRef.current) return;
+    if(!pdf||!canvasRef.current){ console.error("🔴 renderPage: pdf ou canvas manquant", {pdf:!!pdf, canvas:!!canvasRef.current}); return; }
     setPdfReady(false);
+    console.log("🔵 renderPage: page", pageNum);
     pdf.getPage(pageNum).then(page=>{
-      const vp=page.getViewport({scale:1.5}), cv=canvasRef.current; if(!cv) return;
+      const vp=page.getViewport({scale:1.5}), cv=canvasRef.current;
+      if(!cv){ console.error("🔴 canvas disparu après getPage"); return; }
+      console.log("🔵 Viewport:", vp.width, "x", vp.height);
       cv.width=vp.width; cv.height=vp.height; setImgSz({w:vp.width,h:vp.height});
-      page.render({canvasContext:cv.getContext("2d"),viewport:vp}).promise.then(()=>{ setPdfReady(true); setLoadingPdf(false); });
-    });
+      console.log("🔵 Rendu en cours...");
+      page.render({canvasContext:cv.getContext("2d"),viewport:vp}).promise.then(()=>{
+        console.log("🟢 Rendu terminé");
+        setPdfReady(true); setLoadingPdf(false);
+      }).catch(err=>{ console.error("🔴 Erreur rendu:", err); setLoadingPdf(false); });
+    }).catch(err=>{ console.error("🔴 Erreur getPage:", err); setLoadingPdf(false); });
   };
 
   const goPage=n=>{ const p=Math.max(1,Math.min(totalPages,n)); setCurrentPage(p); setTf({x:0,y:0,s:1}); if(pdfDocRef.current) renderPage(pdfDocRef.current,p); };
