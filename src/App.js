@@ -180,10 +180,14 @@ function PlanViewer({zone,role,onZTClick,onNewZT,activeStatuses,equipes,pushToas
     };
     tryLoad()
       .then(pdf=>{
-        pdfDocRef.current=pdf;
+        pdfDocRef.current = pdf;
         setTotalPages(pdf.numPages);
-        // Attendre que React monte le canvas avant de rendre
-        setTimeout(()=>renderPage(pdf,1), 50);
+        setLoadingPdf(false);
+        // Si le canvas est déjà monté, on rend directement
+        if(canvasRef.current) {
+          renderPage(pdf, 1);
+        }
+        // Sinon canvasCallbackRef le déclenchera quand le canvas sera monté
       })
       .catch(err=>{ console.error("🔴 PDF load failed:", err); setLoadingPdf(false); pushToast&&pushToast("Erreur PDF: "+err.message,"error"); });
   },[zone && zone.plan_url]);
@@ -309,7 +313,7 @@ function PlanViewer({zone,role,onZTClick,onNewZT,activeStatuses,equipes,pushToas
         ):(
           <div style={{position:"absolute",left:"50%",top:"50%",transform:"translate(calc(-50% + "+tf.x+"px), calc(-50% + "+tf.y+"px)) scale("+tf.s+")",transformOrigin:"center center",pointerEvents:"none"}}>
             {/* Canvas toujours monté pour que le ref soit disponible */}
-            <canvas ref={canvasRef} style={{display:"block",maxWidth:cw+"px",opacity:pdfReady?1:0}}/>
+            <canvas ref={canvasCallbackRef} style={{display:"block",maxWidth:cw+"px",opacity:pdfReady?1:0}}/>
             {zone.plan_type!=="pdf"&&<img src={zone.plan_url} alt="plan" style={{display:"block",maxWidth:cw+"px",position:"absolute",top:0,left:0}} onLoad={e=>setImgSz({w:e.target.naturalWidth,h:e.target.naturalHeight})}/>}
             {zone.plan_type==="pdf"&&!pdfReady&&<div style={{position:"absolute",inset:0,display:"flex",alignItems:"center",justifyContent:"center",fontSize:13,color:"#aaa"}}>Rendu…</div>}
 
