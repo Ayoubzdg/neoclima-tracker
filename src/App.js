@@ -5,7 +5,11 @@ import {
   fetchNiveaux,   createNiveau,
   fetchZones,     createZone, uploadPlan,
   fetchZonesTravail, createZoneTravail, updateZoneTravail, deleteZoneTravail,
-  subscribeZonesTravail
+  subscribeZonesTravail,
+  updateChantier, deleteChantier,
+  updateBatiment, deleteBatiment,
+  updateNiveau, deleteNiveau,
+  updateZone, deleteZone,
 } from './supabase';
 
 const NC = {
@@ -51,9 +55,23 @@ function Field({ label, children }) {
     <div style={{ marginBottom:12 }}>
       <div style={{ fontSize:11, color:NC.gray, marginBottom:4, fontWeight:700, textTransform:"uppercase", letterSpacing:0.3 }}>{label}</div>
       {children}
-    </div>
-  );
-}
+      {/* Modal renommage */}
+      {editingItem && (
+        <Modal title={"Renommer — "+editingItem.item.name} onClose={()=>setEditingItem(null)}>
+          <Field label="Nouveau nom">
+            <input autoFocus value={editingName} onChange={e=>setEditingName(e.target.value)} onKeyDown={e=>e.key==="Enter"&&handleRename()} style={{ width:"100%", fontSize:13, boxSizing:"border-box" }} />
+          </Field>
+          <div style={{ display:"flex", gap:8 }}>
+            <SBtn primary onClick={handleRename} style={{ flex:1 }}>{saving?"…":"Renommer"}</SBtn>
+            <SBtn onClick={()=>setEditingItem(null)} style={{ flex:1 }}>Annuler</SBtn>
+          </div>
+        </Modal>
+      )}
+
+      {/* Footer */}
+      <div style={{ textAlign:"center", padding:"18px 0 10px", fontSize:11, color:"#bbb", borderTop:"1px solid #e8e8e8", marginTop:24, fontFamily:"Arial,sans-serif" }}>
+        © {new Date().getFullYear()} Propriété de <strong style={{ color:NC.gray }}>Neoclima Sàrl</strong> — Tous droits réservés
+      </div>
 function SCard({ title, children, accent }) {
   const a = accent || NC.red;
   return (
@@ -77,16 +95,22 @@ function Modal({ title, children, onClose }) {
     </div>
   );
 }
-function NavCol({ title, items, selId, onSel, canAdd, onAdd, badge, loading }) {
+function NavCol({ title, items, selId, onSel, canAdd, onAdd, onEdit, onDelete, badge, loading }) {
   return (
     <div style={{ flex:"1 1 140px", minWidth:120 }}>
       <div style={{ fontSize:11, color:NC.gray, marginBottom:6, fontWeight:700, letterSpacing:0.5, textTransform:"uppercase" }}>{title}</div>
       {loading && <div style={{ fontSize:12, color:NC.gray, padding:"8px 0" }}>Chargement…</div>}
       {items.map((item) => (
-        <div key={item.id} onClick={() => onSel(item.id)}
-          style={{ padding:"9px 10px", borderRadius:6, border:"1px solid "+(selId===item.id?NC.red:"#e0e0e0"), borderLeft:selId===item.id?"3px solid "+NC.red:"1px solid #e0e0e0", background:selId===item.id?NC.redBg:"white", marginBottom:5, cursor:"pointer", fontSize:13, color:selId===item.id?NC.red:NC.dark, display:"flex", justifyContent:"space-between", alignItems:"center" }}>
-          <span style={{ fontWeight:selId===item.id?700:400 }}>{item.name}</span>
-          {badge && badge(item) != null && <span style={{ fontSize:11, background:NC.dark, color:"white", borderRadius:10, padding:"1px 7px", fontWeight:700 }}>{badge(item)}</span>}
+        <div key={item.id}
+          style={{ padding:"9px 10px", borderRadius:6, border:"1px solid "+(selId===item.id?NC.red:"#e0e0e0"), borderLeft:selId===item.id?"3px solid "+NC.red:"1px solid #e0e0e0", background:selId===item.id?NC.redBg:"white", marginBottom:5, fontSize:13, color:selId===item.id?NC.red:NC.dark, display:"flex", justifyContent:"space-between", alignItems:"center", gap:4 }}>
+          <span onClick={() => onSel(item.id)} style={{ fontWeight:selId===item.id?700:400, cursor:"pointer", flex:1, overflow:"hidden", textOverflow:"ellipsis", whiteSpace:"nowrap" }}>{item.name}</span>
+          <div style={{ display:"flex", gap:3, flexShrink:0 }}>
+            {badge && badge(item) != null && <span style={{ fontSize:11, background:NC.dark, color:"white", borderRadius:10, padding:"1px 7px", fontWeight:700 }}>{badge(item)}</span>}
+            {canAdd && <>
+              <button onClick={e=>{e.stopPropagation();onEdit(item);}} title="Renommer" style={{ width:22, height:22, borderRadius:4, border:"1px solid #e0e0e0", background:"white", color:NC.gray, cursor:"pointer", fontSize:12, display:"flex", alignItems:"center", justifyContent:"center", padding:0 }}>✎</button>
+              <button onClick={e=>{e.stopPropagation();onDelete(item);}} title="Supprimer" style={{ width:22, height:22, borderRadius:4, border:"1px solid #fcc", background:"#fff5f5", color:NC.red, cursor:"pointer", fontSize:12, display:"flex", alignItems:"center", justifyContent:"center", padding:0 }}>×</button>
+            </>}
+          </div>
         </div>
       ))}
       {canAdd && <button onClick={onAdd} style={{ fontSize:12, padding:"5px 8px", borderRadius:6, border:"1px dashed "+NC.red, background:"transparent", color:NC.red, cursor:"pointer", width:"100%", fontFamily:"Arial,sans-serif" }}>+ {title.slice(0,-1)}</button>}
@@ -390,7 +414,8 @@ export default function App() {
   const [editZT, setEditZT]       = useState(null);
   const [addingWhat, setAddingWhat] = useState(null);
   const [newName, setNewName]     = useState("");
-  const [saving, setSaving]       = useState(false);
+  const [editingItem, setEditingItem] = useState(null); // { type, item }
+  const [editingName, setEditingName] = useState("");
   const fileInputRef = useRef(null);
   const realtimeSub  = useRef(null);
 
@@ -534,16 +559,20 @@ export default function App() {
           <div style={{ display:"flex", gap:10, flexWrap:"wrap" }}>
             <NavCol title="Chantiers" items={chantiers} selId={sel.chantier} loading={loading.chantiers}
               onSel={id=>setSel({chantier:id,batiment:null,niveau:null,zone:null})}
-              canAdd={canEdit} onAdd={()=>setAddingWhat("chantier")} />
+              canAdd={canEdit} onAdd={()=>setAddingWhat("chantier")}
+              onEdit={item=>handleEdit("chantier",item)} onDelete={item=>handleDelete("chantier",item)} />
             {sel.chantier && <NavCol title="Bâtiments" items={batiments} selId={sel.batiment} loading={loading.batiments}
               onSel={id=>setSel(s=>({...s,batiment:id,niveau:null,zone:null}))}
-              canAdd={canEdit} onAdd={()=>setAddingWhat("batiment")} />}
+              canAdd={canEdit} onAdd={()=>setAddingWhat("batiment")}
+              onEdit={item=>handleEdit("batiment",item)} onDelete={item=>handleDelete("batiment",item)} />}
             {sel.batiment && <NavCol title="Niveaux" items={niveaux} selId={sel.niveau} loading={loading.niveaux}
               onSel={id=>setSel(s=>({...s,niveau:id,zone:null}))}
-              canAdd={canEdit} onAdd={()=>setAddingWhat("niveau")} />}
+              canAdd={canEdit} onAdd={()=>setAddingWhat("niveau")}
+              onEdit={item=>handleEdit("niveau",item)} onDelete={item=>handleDelete("niveau",item)} />}
             {sel.niveau && <NavCol title="Zones" items={zones} selId={sel.zone} loading={loading.zones}
               onSel={id=>openZone(id)}
               canAdd={canEdit} onAdd={()=>setAddingWhat("zone")}
+              onEdit={item=>handleEdit("zone",item)} onDelete={item=>handleDelete("zone",item)}
               badge={z=>z.zones_travail_count||null} />}
           </div>
           {!sel.chantier && <div style={{ fontSize:13, color:NC.gray, marginTop:16 }}>Sélectionnez un chantier pour commencer.</div>}
@@ -570,6 +599,9 @@ export default function App() {
                 <div style={{ width:9, height:9, borderRadius:2, background:v.color }} />{v.label}
               </div>
             ))}
+          </div>
+          <div style={{ marginTop:10, padding:"8px 12px", background:"#fffbe6", border:"1px solid #ffe58f", borderRadius:6, fontSize:12, color:"#7d6200" }}>
+            ⚠️ Les plans importés doivent être vérifiés régulièrement afin de s'assurer qu'ils sont à jour.
           </div>
         </div>
       )}
