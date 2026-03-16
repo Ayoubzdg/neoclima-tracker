@@ -337,10 +337,36 @@ function PlanViewer({zone,role,onZTClick,onNewZT,activeStatuses,equipes,pushToas
     if(!zone?.plan_url||zone.plan_type!=="pdf"||!pdfLib||!canvasRef.current)return;
     setPdfReady(false);setLoadingPdf(true);
     const url=zone.plan_url;
-    const load=pdfCacheRef.current[url]
-      ? Promise.resolve(pdfCacheRef.current[url])
-      : pdfLib.getDocument({ url, withCredentials: false }).promise.then(pdf=>{pdfCacheRef.current[url]=pdf;return pdf;});
-    load.then(pdf=>{pdfDocRef.current=pdf;setTotalPages(pdf.numPages);renderPage(pdf,1);}).catch(e=>{console.error("PDF load error:",e);setLoadingPdf(false);pushToast&&pushToast("Erreur chargement PDF","error");});
+
+    const tryLoad = async () => {
+      // Méthode 1 : cache
+      if(pdfCacheRef.current[url]) return pdfCacheRef.current[url];
+      // Méthode 2 : fetch + ArrayBuffer (contourne CORS sur certains navigateurs)
+      try {
+        const resp = await fetch(url, { mode: 'cors' });
+        if(!resp.ok) throw new Error("HTTP "+resp.status);
+        const buf = await resp.arrayBuffer();
+        const pdf = await pdfLib.getDocument({ data: buf }).promise;
+        pdfCacheRef.current[url] = pdf;
+        return pdf;
+      } catch(e1) {
+        console.warn("Méthode fetch échouée:", e1.message, "— tentative URL directe");
+        // Méthode 3 : URL directe via pdf.js
+        const pdf = await pdfLib.getDocument({ url, withCredentials: false }).promise;
+        pdfCacheRef.current[url] = pdf;
+        return pdf;
+      }
+    };
+
+    tryLoad()
+      .then(pdf=>{ pdfDocRef.current=pdf; setTotalPages(pdf.numPages); renderPage(pdf,1); })
+      .catch(err=>{
+        console.error("PDF load failed:", err);
+        setLoadingPdf(false);
+        setPdfReady(false);
+        pushToast && pushToast("Impossible de charger le PDF : "+err.message, "error");
+      });
+  },[zone&&zone.plan_url,pdfLib]);
   },[zone&&zone.plan_url,pdfLib]);
 
   const renderPage=(pdf,pageNum)=>{
