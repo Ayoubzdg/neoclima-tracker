@@ -322,9 +322,17 @@ function PlanViewer({zone,role,onZTClick,onNewZT,activeStatuses,equipes,pushToas
   const [pendingPhotoPos,setPendingPhotoPos]=useState(null);
 
   useEffect(()=>{
-    if(window.pdfjsLib){window.pdfjsLib.GlobalWorkerOptions.workerSrc="https://cdnjs.cloudflare.com/ajax/libs/pdf.js/3.11.174/pdf.worker.min.js";setPdfLib(window.pdfjsLib);return;}
-    const s=document.createElement("script");s.src="https://cdnjs.cloudflare.com/ajax/libs/pdf.js/3.11.174/pdf.min.js";
-    s.onload=()=>{window.pdfjsLib.GlobalWorkerOptions.workerSrc="https://cdnjs.cloudflare.com/ajax/libs/pdf.js/3.11.174/pdf.worker.min.js";setPdfLib(window.pdfjsLib);};
+    if(window.pdfjsLib){
+      window.pdfjsLib.GlobalWorkerOptions.workerSrc="/pdf.worker.min.js";
+      setPdfLib(window.pdfjsLib); return;
+    }
+    const s=document.createElement("script");
+    s.src="/pdf.min.js";
+    s.onload=()=>{
+      window.pdfjsLib.GlobalWorkerOptions.workerSrc="/pdf.worker.min.js";
+      setPdfLib(window.pdfjsLib);
+    };
+    s.onerror=()=>{ console.error("Impossible de charger pdf.js"); };
     document.head.appendChild(s);
   },[]);
 
