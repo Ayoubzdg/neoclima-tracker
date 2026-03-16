@@ -182,12 +182,7 @@ function PlanViewer({zone,role,onZTClick,onNewZT,activeStatuses,equipes,pushToas
       .then(pdf=>{
         pdfDocRef.current = pdf;
         setTotalPages(pdf.numPages);
-        setLoadingPdf(false);
-        // Si le canvas est déjà monté, on rend directement
-        if(canvasRef.current) {
-          renderPage(pdf, 1);
-        }
-        // Sinon canvasCallbackRef le déclenchera quand le canvas sera monté
+        setPdfDoc(pdf);
       })
       .catch(err=>{ console.error("🔴 PDF load failed:", err); setLoadingPdf(false); pushToast&&pushToast("Erreur PDF: "+err.message,"error"); });
   },[zone && zone.plan_url]);
@@ -209,7 +204,11 @@ function PlanViewer({zone,role,onZTClick,onNewZT,activeStatuses,equipes,pushToas
     }).catch(err=>{ console.error("🔴 Erreur getPage:", err); setLoadingPdf(false); });
   };
 
-  const goPage=n=>{ const p=Math.max(1,Math.min(totalPages,n)); setCurrentPage(p); setTf({x:0,y:0,s:1}); if(pdfDocRef.current) renderPage(pdfDocRef.current,p); };
+  // Déclenche le rendu quand le pdfDoc ET le canvas sont disponibles
+  useEffect(()=>{
+    if(!pdfDoc || !canvasRef.current) return;
+    renderPage(pdfDoc, 1);
+  }, [pdfDoc]);
 
   const onWheel=useCallback(e=>{
     e.preventDefault(); const el=containerRef.current; if(!el) return;
@@ -313,7 +312,7 @@ function PlanViewer({zone,role,onZTClick,onNewZT,activeStatuses,equipes,pushToas
         ):(
           <div style={{position:"absolute",left:"50%",top:"50%",transform:"translate(calc(-50% + "+tf.x+"px), calc(-50% + "+tf.y+"px)) scale("+tf.s+")",transformOrigin:"center center",pointerEvents:"none"}}>
             {/* Canvas toujours monté pour que le ref soit disponible */}
-            <canvas ref={canvasCallbackRef} style={{display:"block",maxWidth:cw+"px",opacity:pdfReady?1:0}}/>
+            <canvas ref={canvasRef} style={{display:"block",maxWidth:cw+"px",opacity:pdfReady?1:0}}/>
             {zone.plan_type!=="pdf"&&<img src={zone.plan_url} alt="plan" style={{display:"block",maxWidth:cw+"px",position:"absolute",top:0,left:0}} onLoad={e=>setImgSz({w:e.target.naturalWidth,h:e.target.naturalHeight})}/>}
             {zone.plan_type==="pdf"&&!pdfReady&&<div style={{position:"absolute",inset:0,display:"flex",alignItems:"center",justifyContent:"center",fontSize:13,color:"#aaa"}}>Rendu…</div>}
 
