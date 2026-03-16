@@ -85,7 +85,39 @@ export async function deleteZoneTravail(id) {
   if (error) throw error;
 }
 
-// ── Realtime subscription ─────────────────────────────────────────────────────
+// ── Edit / Delete structure ───────────────────────────────────────────────────
+export async function updateChantier(id, name) {
+  const { error } = await supabase.from('chantiers').update({ name }).eq('id', id);
+  if (error) throw error;
+}
+export async function deleteChantier(id) {
+  const { error } = await supabase.from('chantiers').delete().eq('id', id);
+  if (error) throw error;
+}
+export async function updateBatiment(id, name) {
+  const { error } = await supabase.from('batiments').update({ name }).eq('id', id);
+  if (error) throw error;
+}
+export async function deleteBatiment(id) {
+  const { error } = await supabase.from('batiments').delete().eq('id', id);
+  if (error) throw error;
+}
+export async function updateNiveau(id, name) {
+  const { error } = await supabase.from('niveaux').update({ name }).eq('id', id);
+  if (error) throw error;
+}
+export async function deleteNiveau(id) {
+  const { error } = await supabase.from('niveaux').delete().eq('id', id);
+  if (error) throw error;
+}
+export async function updateZone(id, name) {
+  const { error } = await supabase.from('zones').update({ name }).eq('id', id);
+  if (error) throw error;
+}
+export async function deleteZone(id) {
+  const { error } = await supabase.from('zones').delete().eq('id', id);
+  if (error) throw error;
+}
 export function subscribeZonesTravail(zone_id, callback) {
   return supabase.channel('zt-' + zone_id)
     .on('postgres_changes', { event: '*', schema: 'public', table: 'zones_travail', filter: 'zone_id=eq.' + zone_id }, callback)
