@@ -299,7 +299,7 @@ function TodayView({role,chantiers,equipes,currentEquipe,onOpenZone,pushToast}){
 }
 
 // ── PlanViewer v7 (annotations + photos + NC) ─────────────────────────────────
-function PlanViewer({zone,role,onZTClick,onNewZT,activeStatuses,equipes}){
+function PlanViewer({zone,role,onZTClick,onNewZT,activeStatuses,equipes,pushToast}){
   const containerRef=useRef(null),canvasRef=useRef(null);
   const [tf,setTf]=useState({x:0,y:0,s:1});
   const [pdfReady,setPdfReady]=useState(false);
@@ -337,8 +337,10 @@ function PlanViewer({zone,role,onZTClick,onNewZT,activeStatuses,equipes}){
     if(!zone?.plan_url||zone.plan_type!=="pdf"||!pdfLib||!canvasRef.current)return;
     setPdfReady(false);setLoadingPdf(true);
     const url=zone.plan_url;
-    const load=pdfCacheRef.current[url]?Promise.resolve(pdfCacheRef.current[url]):fetch(url).then(r=>r.arrayBuffer()).then(buf=>pdfLib.getDocument({data:buf}).promise).then(pdf=>{pdfCacheRef.current[url]=pdf;return pdf;});
-    load.then(pdf=>{pdfDocRef.current=pdf;setTotalPages(pdf.numPages);renderPage(pdf,1);}).catch(()=>setLoadingPdf(false));
+    const load=pdfCacheRef.current[url]
+      ? Promise.resolve(pdfCacheRef.current[url])
+      : pdfLib.getDocument({ url, withCredentials: false }).promise.then(pdf=>{pdfCacheRef.current[url]=pdf;return pdf;});
+    load.then(pdf=>{pdfDocRef.current=pdf;setTotalPages(pdf.numPages);renderPage(pdf,1);}).catch(e=>{console.error("PDF load error:",e);setLoadingPdf(false);pushToast&&pushToast("Erreur chargement PDF","error");});
   },[zone&&zone.plan_url,pdfLib]);
 
   const renderPage=(pdf,pageNum)=>{
@@ -1282,7 +1284,7 @@ export default function App(){
         {canEdit&&<button onClick={()=>fileInputRef.current?.click()} style={{fontSize:12,padding:"4px 12px",borderRadius:5,border:"1px solid "+NC_COL.red,background:NC_COL.red,color:"white",cursor:"pointer",marginLeft:"auto",fontWeight:500}}>{currentZone.plan_url?"Changer le plan":"Importer un plan PDF"}</button>}
         <input ref={fileInputRef} type="file" accept="application/pdf,image/*" style={{display:"none"}} onChange={handlePlanUpload}/>
       </div>
-      <PlanViewer zone={currentZone} role={role} activeStatuses={activeStatuses} equipes={equipes}
+      <PlanViewer zone={currentZone} role={role} activeStatuses={activeStatuses} equipes={equipes} pushToast={pushToast}
         onZTClick={zt=>setEditZT({...zt,isNew:false,_origStatus:zt.status})}
         onNewZT={rect=>canEdit&&setEditZT({isNew:true,rect,label:"",equipe:currentEquipe||"",status:"todo",comment:""})}/>
       {/* Légende */}
