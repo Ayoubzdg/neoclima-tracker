@@ -915,7 +915,7 @@ function Dashboard({allZT,batiments,activeStatuses,equipes}) {
 }
 
 // ── Settings ──────────────────────────────────────────────────────────────────
-function SettingsView({pushToast,onSettingsChange}) {
+function SettingsView({pushToast,onSettingsChange,onEquipesChange}) {
   const [tab,setTab]               = useState("equipes");
   const [equipes,setEquipes]       = useState([]);
   const [users,setUsers]           = useState([]);
@@ -973,7 +973,14 @@ function SettingsView({pushToast,onSettingsChange}) {
             <Field label="Responsable"><input value={newEq.responsable} onChange={e=>setNewEq(p=>({...p,responsable:e.target.value}))} style={inp}/></Field>
           </div>
           <Field label="Couleur"><div style={{display:"flex",gap:6,flexWrap:"wrap"}}>{EQUIPE_COLORS.map(c=><div key={c} onClick={()=>setNewEq(p=>({...p,couleur:c}))} style={{width:24,height:24,borderRadius:4,background:c,cursor:"pointer",border:newEq.couleur===c?"3px solid "+NC_COL.dark:"2px solid transparent"}}/>)}</div></Field>
-          <SBtn primary onClick={async()=>{if(!newEq.name.trim())return;const r=await createEquipe({...newEq,ordre:equipes.length});setEquipes(p=>[...p,r]);setNewEq({name:"",responsable:"",couleur:EQUIPE_COLORS[0]});pushToast("Créée");}} disabled={saving}>Créer</SBtn>
+          <SBtn primary onClick={async()=>{
+            if(!newEq.name.trim())return;
+            const r=await createEquipe({...newEq,ordre:equipes.length});
+            setEquipes(p=>[...p,r]);
+            setNewEq({name:"",responsable:"",couleur:EQUIPE_COLORS[0]});
+            pushToast("Créée");
+            onEquipesChange && onEquipesChange();
+          }} disabled={saving}>Créer</SBtn>
         </>}
       </SCard>}
 
@@ -1051,7 +1058,13 @@ function SettingsView({pushToast,onSettingsChange}) {
         <Field label="Couleur"><div style={{display:"flex",gap:6,flexWrap:"wrap"}}>{EQUIPE_COLORS.map(c=><div key={c} onClick={()=>setEditEq(p=>({...p,couleur:c}))} style={{width:24,height:24,borderRadius:4,background:c,cursor:"pointer",border:editEq.couleur===c?"3px solid "+NC_COL.dark:"2px solid transparent"}}/>)}</div></Field>
         <Field label="Statut"><div style={{display:"flex",gap:8}}>{[true,false].map(v=><div key={String(v)} onClick={()=>setEditEq(p=>({...p,actif:v}))} style={{flex:1,padding:8,borderRadius:6,border:"1.5px solid "+(editEq.actif===v?(v?NC_COL.green:NC_COL.red):"#e0e0e0"),background:editEq.actif===v?(v?NC_COL.greenBg:NC_COL.redBg):"#fafafa",cursor:"pointer",fontSize:12,color:editEq.actif===v?(v?NC_COL.green:NC_COL.red):NC_COL.gray,textAlign:"center",fontWeight:editEq.actif===v?700:400}}>{v?"Active":"Inactive"}</div>)}</div></Field>
         <div style={{display:"flex",gap:8,marginTop:8}}>
-          <SBtn primary onClick={async()=>{ const r=await updateEquipe(editEq.id,{name:editEq.name,responsable:editEq.responsable,couleur:editEq.couleur,actif:editEq.actif}); setEquipes(p=>p.map(x=>x.id===r.id?r:x)); setEditEq(null); pushToast("Mise à jour"); }} style={{flex:1}}>Enregistrer</SBtn>
+          <SBtn primary onClick={async()=>{
+            const r=await updateEquipe(editEq.id,{name:editEq.name,responsable:editEq.responsable,couleur:editEq.couleur,actif:editEq.actif});
+            setEquipes(p=>p.map(x=>x.id===r.id?r:x));
+            setEditEq(null);
+            pushToast("Mise à jour");
+            onEquipesChange && onEquipesChange();
+          }} style={{flex:1}}>Enregistrer</SBtn>
           <SBtn onClick={()=>setEditEq(null)} style={{flex:1}}>Annuler</SBtn>
         </div>
       </Modal>}
@@ -1270,7 +1283,8 @@ export default function App() {
       {view==="gantt"     && <GanttView chantiers={chantiers}/>}
       {view==="nc"        && <NCView chantiers={chantiers} equipes={equipes} pushToast={pushToast}/>}
       {view==="dashboard" && <Dashboard allZT={allZT} batiments={batiments} activeStatuses={activeStatuses} equipes={equipes}/>}
-      {view==="settings"  && <SettingsView pushToast={pushToast} onSettingsChange={(key,val)=>{ if(key==="statuts_actifs")setActiveStatuses(val); if(key==="equipes")fetchEquipes().then(setEquipes); }}/>}
+      {view==="settings"  && <SettingsView pushToast={pushToast} onSettingsChange={(key,val)=>{       if(key==="statuts_actifs") setActiveStatuses(val);
+      if(key==="equipes") fetchEquipes().then(setEquipes); }}/>}
 
       {view==="nav" && (
         <div style={{padding:14,flex:1}}>
