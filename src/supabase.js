@@ -4,6 +4,57 @@ const supabaseUrl = process.env.REACT_APP_SUPABASE_URL;
 const supabaseKey = process.env.REACT_APP_SUPABASE_ANON_KEY;
 export const supabase = createClient(supabaseUrl, supabaseKey);
 
+// ── Paramètres ────────────────────────────────────────────────────────────────
+export async function fetchParametre(key) {
+  const { data, error } = await supabase.from('parametres').select('value').eq('key', key).single();
+  if (error) return null;
+  return data.value;
+}
+export async function setParametre(key, value) {
+  const { error } = await supabase.from('parametres').upsert({ key, value, updated_at: new Date().toISOString() });
+  if (error) throw error;
+}
+
+// ── Équipes ───────────────────────────────────────────────────────────────────
+export async function fetchEquipes() {
+  const { data, error } = await supabase.from('equipes').select('*').eq('actif', true).order('ordre').order('name');
+  if (error) throw error; return data;
+}
+export async function fetchAllEquipes() {
+  const { data, error } = await supabase.from('equipes').select('*').order('ordre').order('name');
+  if (error) throw error; return data;
+}
+export async function createEquipe(payload) {
+  const { data, error } = await supabase.from('equipes').insert(payload).select().single();
+  if (error) throw error; return data;
+}
+export async function updateEquipe(id, payload) {
+  const { data, error } = await supabase.from('equipes').update(payload).eq('id', id).select().single();
+  if (error) throw error; return data;
+}
+export async function deleteEquipe(id) {
+  const { error } = await supabase.from('equipes').delete().eq('id', id);
+  if (error) throw error;
+}
+
+// ── Utilisateurs ──────────────────────────────────────────────────────────────
+export async function fetchUtilisateurs() {
+  const { data, error } = await supabase.from('utilisateurs').select('*, equipes(name, couleur)').order('nom');
+  if (error) throw error; return data;
+}
+export async function createUtilisateur(payload) {
+  const { data, error } = await supabase.from('utilisateurs').insert(payload).select().single();
+  if (error) throw error; return data;
+}
+export async function updateUtilisateur(id, payload) {
+  const { data, error } = await supabase.from('utilisateurs').update(payload).eq('id', id).select().single();
+  if (error) throw error; return data;
+}
+export async function deleteUtilisateur(id) {
+  const { error } = await supabase.from('utilisateurs').delete().eq('id', id);
+  if (error) throw error;
+}
+
 // ── Chantiers ─────────────────────────────────────────────────────────────────
 export async function fetchChantiers() {
   const { data, error } = await supabase.from('chantiers').select('*').order('created_at');
@@ -87,14 +138,8 @@ export async function uploadPlan(zoneId, file) {
   if (upd) throw upd;
   return { plan_url: data.publicUrl, plan_type: planType, plan_pages: pageCount };
 }
-
 async function getPdfPageCount(file) {
-  try {
-    if (!window.pdfjsLib) return 1;
-    const buf = await file.arrayBuffer();
-    const pdf = await window.pdfjsLib.getDocument({ data: buf }).promise;
-    return pdf.numPages;
-  } catch { return 1; }
+  try { if (!window.pdfjsLib) return 1; const buf = await file.arrayBuffer(); const pdf = await window.pdfjsLib.getDocument({ data: buf }).promise; return pdf.numPages; } catch { return 1; }
 }
 
 // ── Zones de travail ──────────────────────────────────────────────────────────
@@ -103,7 +148,9 @@ export async function fetchZonesTravail(zone_id) {
   if (error) throw error; return data;
 }
 export async function fetchAllZonesTravailByDate(date) {
-  const { data, error } = await supabase.from('zones_travail').select('*, zones(name, niveau_id, niveaux:niveau_id(name, batiment_id, batiments:batiment_id(name, chantier_id, chantiers:chantier_id(name))))').eq('date_pose', date);
+  const { data, error } = await supabase.from('zones_travail')
+    .select('*, zones(name, niveau_id, niveaux:niveau_id(name, batiment_id, batiments:batiment_id(name, chantier_id, chantiers:chantier_id(name))))')
+    .eq('date_pose', date);
   if (error) throw error; return data;
 }
 export async function createZoneTravail(zone_id, payload) {
@@ -125,8 +172,6 @@ export async function fetchHistory(zone_travail_id) {
 export async function addHistory(zone_travail_id, role, action, detail) {
   await supabase.from('zt_history').insert({ zone_travail_id, role, action, detail });
 }
-
-// ── Realtime ──────────────────────────────────────────────────────────────────
 export function subscribeZonesTravail(zone_id, callback) {
   return supabase.channel('zt-' + zone_id)
     .on('postgres_changes', { event:'*', schema:'public', table:'zones_travail', filter:'zone_id=eq.'+zone_id }, callback)
