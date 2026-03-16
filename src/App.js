@@ -153,24 +153,34 @@ function PlanViewer({zone,role,onZTClick,onNewZT,activeStatuses,equipes,pushToas
     setPdfReady(false); setLoadingPdf(true);
     const url = zone.plan_url;
     const tryLoad = async () => {
-      if(pdfCacheRef.current[url]) return pdfCacheRef.current[url];
+      console.log("🔵 Début chargement PDF:", url);
+      console.log("🔵 pdfjsLib disponible:", !!pdfjsLib);
+      console.log("🔵 Version pdfjsLib:", pdfjsLib?.version);
+      if(pdfCacheRef.current[url]) { console.log("🟢 Depuis cache"); return pdfCacheRef.current[url]; }
       try {
+        console.log("🔵 Tentative fetch...");
         const resp = await fetch(url, {mode:'cors'});
+        console.log("🔵 Fetch status:", resp.status);
         if(!resp.ok) throw new Error("HTTP "+resp.status);
         const buf = await resp.arrayBuffer();
+        console.log("🔵 ArrayBuffer size:", buf.byteLength);
+        console.log("🔵 Appel pdfjsLib.getDocument...");
         const pdf = await pdfjsLib.getDocument({data:buf}).promise;
+        console.log("🟢 PDF chargé, pages:", pdf.numPages);
         pdfCacheRef.current[url] = pdf;
         return pdf;
       } catch(e1) {
-        console.warn("fetch échoué:", e1.message, "— URL directe");
+        console.warn("🟠 fetch échoué:", e1.message);
+        console.log("🔵 Tentative URL directe...");
         const pdf = await pdfjsLib.getDocument({url, withCredentials:false}).promise;
+        console.log("🟢 PDF chargé via URL directe, pages:", pdf.numPages);
         pdfCacheRef.current[url] = pdf;
         return pdf;
       }
     };
     tryLoad()
       .then(pdf=>{ pdfDocRef.current=pdf; setTotalPages(pdf.numPages); renderPage(pdf,1); })
-      .catch(err=>{ console.error("PDF load failed:", err); setLoadingPdf(false); pushToast&&pushToast("Erreur PDF: "+err.message,"error"); });
+      .catch(err=>{ console.error("🔴 PDF load failed:", err); setLoadingPdf(false); pushToast&&pushToast("Erreur PDF: "+err.message,"error"); });
   },[zone && zone.plan_url]);
 
   const renderPage=(pdf,pageNum)=>{
