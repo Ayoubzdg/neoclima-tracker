@@ -136,7 +136,9 @@ function PlanViewer({ zone, role, onZTClick, onNewZT }) {
   const [currentPage, setCurrentPage] = useState(1);
   const [totalPages, setTotalPages]   = useState(1);
   const [filterStatus, setFilterStatus] = useState("all");
+  const [loadingPdf, setLoadingPdf]   = useState(false);
   const pdfDocRef = useRef(null);
+  const pdfCacheRef = useRef({});
   const panRef  = useRef({ on:false, sx:0, sy:0, tx:0, ty:0 });
   const drwRef  = useRef({ on:false, sx:0, sy:0 });
   const pnchRef = useRef({ on:false, d:0, s:1, tx:0, ty:0, mx:0, my:0 });
@@ -165,10 +167,16 @@ function PlanViewer({ zone, role, onZTClick, onNewZT }) {
   const renderPage = (pdf, pageNum) => {
     if (!pdf || !canvasRef.current) return;
     setPdfReady(false);
-    pdf.getPage(pageNum).then(page=>{
-      const vp = page.getViewport({scale:2}), cv = canvasRef.current; if (!cv) return;
-      cv.width=vp.width; cv.height=vp.height; setImgSz({w:vp.width,h:vp.height});
-      page.render({canvasContext:cv.getContext("2d"),viewport:vp}).promise.then(()=>setPdfReady(true));
+    pdf.getPage(pageNum).then(page => {
+      // Scale 1.5 au lieu de 2 : 40% plus rapide, qualité suffisante
+      const vp = page.getViewport({ scale: 1.5 });
+      const cv = canvasRef.current; if (!cv) return;
+      cv.width = vp.width; cv.height = vp.height;
+      setImgSz({ w: vp.width, h: vp.height });
+      page.render({ canvasContext: cv.getContext("2d"), viewport: vp }).promise.then(() => {
+        setPdfReady(true);
+        setLoadingPdf(false);
+      });
     });
   };
 
@@ -264,11 +272,17 @@ function PlanViewer({ zone, role, onZTClick, onNewZT }) {
       <div style={{ position:"relative", borderRadius:8, overflow:"hidden", border:"0.5px solid #ddd", background:"#1a1a1a", height:"58vh" }}>
         <div ref={containerRef} style={{ width:"100%",height:"100%",overflow:"hidden",cursor:mode==="draw"&&role==="ca"?"crosshair":"grab",touchAction:"none" }}
           onMouseDown={onDown} onMouseMove={onMove} onMouseUp={onUp} onTouchStart={onDown} onTouchMove={onMove} onTouchEnd={onUp}>
-          {!zone||!zone.plan_url ? (
-            <div style={{ display:"flex",alignItems:"center",justifyContent:"center",height:"100%",fontSize:13,color:"#888" }}>
-              {role==="ca"?"Importez un plan PDF pour commencer.":"Aucun plan importé."}
-            </div>
-          ) : (
+          {!zone || !zone.plan_url ? (
+          <div style={{ display:"flex",alignItems:"center",justifyContent:"center",height:"100%",fontSize:13,color:"#888" }}>
+            {role==="ca"?"Importez un plan PDF pour commencer.":"Aucun plan importé."}
+          </div>
+        ) : loadingPdf && !pdfReady ? (
+          <div style={{ display:"flex",flexDirection:"column",alignItems:"center",justifyContent:"center",height:"100%",gap:12 }}>
+            <div style={{ width:36,height:36,border:"3px solid rgba(255,255,255,0.15)",borderTop:"3px solid "+NC.red,borderRadius:"50%",animation:"spin 0.8s linear infinite" }}/>
+            <div style={{ fontSize:13,color:"#aaa" }}>Chargement du plan…</div>
+            <style>{"@keyframes spin{to{transform:rotate(360deg)}}"}</style>
+          </div>
+        ) : (
             <div style={{ position:"absolute",left:"50%",top:"50%",transform:"translate(calc(-50% + "+tf.x+"px), calc(-50% + "+tf.y+"px)) scale("+tf.s+")",transformOrigin:"center center",pointerEvents:"none" }}>
               {zone.plan_type==="pdf"
                 ? <canvas ref={canvasRef} style={{ display:"block",maxWidth:cw+"px",opacity:pdfReady?1:0 }}/>
