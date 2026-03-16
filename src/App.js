@@ -1,4 +1,7 @@
 import React, { useState, useRef, useEffect, useCallback } from 'react';
+import * as pdfjsLib from 'pdfjs-dist';
+pdfjsLib.GlobalWorkerOptions.workerSrc = '/pdf.worker.min.js';
+
 import {
   fetchChantiers, createChantier, updateChantier, deleteChantier,
   fetchBatiments, createBatiment, updateBatiment, deleteBatiment,
@@ -18,7 +21,6 @@ import {
   fetchBonsTravail, createBonTravail, updateBonTravail, addZoneToBon, updateBonZone, removeBonZone,
 } from './supabase';
 
-// ── Constantes ────────────────────────────────────────────────────────────────
 const NC_COL = {
   red:"#C0392B", redBg:"rgba(192,57,43,0.10)",
   dark:"#2C3E50",
@@ -29,8 +31,8 @@ const NC_COL = {
   blue:"#2980B9",  blueBg:"rgba(41,128,185,0.13)",
   orange:"#D35400",orangeBg:"rgba(211,84,0,0.13)",
 };
-const ROLE_LABELS = { ca:"Chargé d'affaire", chef:"Chef de chantier", monteur:"Monteur" };
-const ROLE_COLORS = { ca:NC_COL.red, chef:NC_COL.dark, monteur:NC_COL.amber };
+const ROLE_LABELS  = { ca:"Chargé d'affaire", chef:"Chef de chantier", monteur:"Monteur" };
+const ROLE_COLORS  = { ca:NC_COL.red, chef:NC_COL.dark, monteur:NC_COL.amber };
 const ALL_STATUSES = {
   todo:       { label:"Prévu",       color:NC_COL.gray,   bg:"rgba(127,140,141,0.10)" },
   inprogress: { label:"En cours",    color:NC_COL.blue,   bg:NC_COL.blueBg },
@@ -40,9 +42,9 @@ const ALL_STATUSES = {
   done:       { label:"Terminé",     color:NC_COL.green,  bg:NC_COL.greenBg },
   blocked:    { label:"Bloqué",      color:NC_COL.red,    bg:NC_COL.redBg },
 };
-const GRAVITE_NC = { mineure:"#E67E22", majeure:"#D35400", bloquante:"#C0392B" };
-const STATUT_NC  = { ouverte:"#E24B4A", en_cours:"#E67E22", levee:"#2980B9", validee:"#27AE60" };
-const TYPE_ESSAI = { debit:"Débit", pression:"Pression", etancheite:"Étanchéité", bruit:"Bruit", temperature:"Température" };
+const GRAVITE_NC  = { mineure:"#E67E22", majeure:"#D35400", bloquante:"#C0392B" };
+const STATUT_NC   = { ouverte:"#E24B4A", en_cours:"#E67E22", levee:"#2980B9", validee:"#27AE60" };
+const TYPE_ESSAI  = { debit:"Débit", pression:"Pression", etancheite:"Étanchéité", bruit:"Bruit", temperature:"Température" };
 const TYPE_BLOCAGE = { materiau:"Matériau manquant", absence:"Absence personnel", acces:"Accès impossible", autre:"Autre" };
 const EQUIPE_COLORS = ["#2980B9","#27AE60","#E67E22","#8E44AD","#C0392B","#16A085","#D35400","#2C3E50","#7F8C8D","#F39C12"];
 const TODAY = new Date().toISOString().split('T')[0];
@@ -50,11 +52,15 @@ const fmtDate = d => { if(!d) return "—"; const p=d.split("-"); return p[2]+".
 const fmtTs   = ts => { if(!ts) return ""; const d=new Date(ts); return d.toLocaleDateString('fr-CH')+' '+d.toLocaleTimeString('fr-CH',{hour:'2-digit',minute:'2-digit'}); };
 const weekDates = (base=TODAY) => { const d=new Date(base); const day=d.getDay()||7; d.setDate(d.getDate()-day+1); return Array.from({length:7},(_,i)=>{ const x=new Date(d); x.setDate(d.getDate()+i); return x.toISOString().split('T')[0]; }); };
 
+const inp = {width:"100%",fontSize:13,boxSizing:"border-box",fontFamily:"Arial,sans-serif"};
+const sel_style = {width:"100%",fontSize:13,padding:"6px 8px",border:"1px solid #ddd",borderRadius:6,fontFamily:"Arial,sans-serif"};
+const SBtn_style = {fontSize:12,padding:"5px 10px",borderRadius:5,border:"1px solid #ddd",background:"white",color:"#2C3E50",cursor:"pointer",fontFamily:"Arial,sans-serif"};
+
 // ── Toast ─────────────────────────────────────────────────────────────────────
 function useToast() {
   const [toasts,setToasts]=useState([]);
   const push=useCallback((msg,type="success")=>{ const id=Date.now(); setToasts(p=>[...p,{id,msg,type}]); setTimeout(()=>setToasts(p=>p.filter(t=>t.id!==id)),3500); },[]);
-  return{toasts,push};
+  return {toasts,push};
 }
 function Toast({toasts}){
   return <div style={{position:"fixed",bottom:20,right:20,zIndex:999,display:"flex",flexDirection:"column",gap:8,pointerEvents:"none"}}>
@@ -63,9 +69,6 @@ function Toast({toasts}){
 }
 
 // ── UI Helpers ────────────────────────────────────────────────────────────────
-const inp = {width:"100%",fontSize:13,boxSizing:"border-box",fontFamily:"Arial,sans-serif"};
-const sel_style = {width:"100%",fontSize:13,padding:"6px 8px",border:"1px solid #ddd",borderRadius:6,fontFamily:"Arial,sans-serif"};
-
 function SBtn({children,onClick,primary,danger,small,style,disabled}){
   const bg=primary?NC_COL.red:"white", col=primary?"white":danger?NC_COL.red:NC_COL.dark, bdr=primary?NC_COL.red:danger?NC_COL.red:"#ddd";
   const pad=small?"4px 9px":"8px 12px", fs=small?12:13;
@@ -74,13 +77,13 @@ function SBtn({children,onClick,primary,danger,small,style,disabled}){
 function Field({label,children,hint}){
   return <div style={{marginBottom:12}}><div style={{fontSize:11,color:NC_COL.gray,marginBottom:4,fontWeight:700,textTransform:"uppercase",letterSpacing:0.3}}>{label}</div>{children}{hint&&<div style={{fontSize:11,color:NC_COL.gray,marginTop:3}}>{hint}</div>}</div>;
 }
-function SCard({title,children,accent,action,noPad}){
+function SCard({title,children,accent,action}){
   const a=accent||NC_COL.red;
-  return <div style={{background:"white",border:"1px solid #e8e8e8",borderRadius:8,padding:noPad?0:16,marginBottom:14}}>
-    <div style={{display:"flex",justifyContent:"space-between",alignItems:"center",marginBottom:12,borderLeft:"3px solid "+a,paddingLeft:8,padding:noPad?"12px 16px 0":"0 0 0 8px"}}>
+  return <div style={{background:"white",border:"1px solid #e8e8e8",borderRadius:8,padding:16,marginBottom:14}}>
+    <div style={{display:"flex",justifyContent:"space-between",alignItems:"center",marginBottom:12,borderLeft:"3px solid "+a,paddingLeft:8}}>
       <div style={{fontSize:14,fontWeight:700,color:a}}>{title}</div>{action}
     </div>
-    <div style={{padding:noPad?"0 16px 16px":0}}>{children}</div>
+    {children}
   </div>;
 }
 function Muted({children}){return <div style={{fontSize:13,color:NC_COL.gray}}>{children}</div>;}
@@ -114,8 +117,406 @@ function NavCol({title,items,selId,onSel,canAdd,onAdd,onEdit,onDelete,badge,load
   </div>;
 }
 
-// ── Gantt View ────────────────────────────────────────────────────────────────
-function GanttView({chantiers,pushToast}){
+// ── PlanViewer ────────────────────────────────────────────────────────────────
+function PlanViewer({zone,role,onZTClick,onNewZT,activeStatuses,equipes,pushToast}){
+  const containerRef=useRef(null), canvasRef=useRef(null);
+  const [tf,setTf]=useState({x:0,y:0,s:1});
+  const [pdfReady,setPdfReady]=useState(false);
+  const [imgSz,setImgSz]=useState({w:800,h:600});
+  const [mode,setMode]=useState("pan");
+  const [drawRect,setDrawRect]=useState(null);
+  const [currentPage,setCurrentPage]=useState(1);
+  const [totalPages,setTotalPages]=useState(1);
+  const [filterStatus,setFilterStatus]=useState("all");
+  const [loadingPdf,setLoadingPdf]=useState(false);
+  const [annotations,setAnnotations]=useState([]);
+  const [photos,setPhotos]=useState([]);
+  const [ncs,setNcs]=useState([]);
+  const [showLayers,setShowLayers]=useState({zones:true,annotations:true,photos:true,nc:true});
+  const [annotNote,setAnnotNote]=useState("");
+  const [pendingPos,setPendingPos]=useState(null);
+  const [pendingPhotoPos,setPendingPhotoPos]=useState(null);
+  const pdfDocRef=useRef(null), panRef=useRef({on:false}), drwRef=useRef({on:false}), pnchRef=useRef({on:false}), pdfCacheRef=useRef({});
+  const photoInputRef=useRef(null);
+
+  useEffect(()=>{
+    setTf({x:0,y:0,s:1}); setPdfReady(false); setDrawRect(null); setMode("pan"); setCurrentPage(1); setTotalPages(1); pdfDocRef.current=null;
+    if(zone?.id){
+      fetchAnnotations(zone.id).then(setAnnotations).catch(()=>{});
+      fetchPhotos(zone.id).then(setPhotos).catch(()=>{});
+      fetchNCs(zone.id).then(setNcs).catch(()=>{});
+    }
+  },[zone && zone.id]);
+
+  useEffect(()=>{
+    if(!zone?.plan_url || zone.plan_type!=="pdf" || !canvasRef.current) return;
+    setPdfReady(false); setLoadingPdf(true);
+    const url = zone.plan_url;
+    const tryLoad = async () => {
+      if(pdfCacheRef.current[url]) return pdfCacheRef.current[url];
+      try {
+        const resp = await fetch(url, {mode:'cors'});
+        if(!resp.ok) throw new Error("HTTP "+resp.status);
+        const buf = await resp.arrayBuffer();
+        const pdf = await pdfjsLib.getDocument({data:buf}).promise;
+        pdfCacheRef.current[url] = pdf;
+        return pdf;
+      } catch(e1) {
+        console.warn("fetch échoué:", e1.message, "— URL directe");
+        const pdf = await pdfjsLib.getDocument({url, withCredentials:false}).promise;
+        pdfCacheRef.current[url] = pdf;
+        return pdf;
+      }
+    };
+    tryLoad()
+      .then(pdf=>{ pdfDocRef.current=pdf; setTotalPages(pdf.numPages); renderPage(pdf,1); })
+      .catch(err=>{ console.error("PDF load failed:", err); setLoadingPdf(false); pushToast&&pushToast("Erreur PDF: "+err.message,"error"); });
+  },[zone && zone.plan_url]);
+
+  const renderPage=(pdf,pageNum)=>{
+    if(!pdf||!canvasRef.current) return;
+    setPdfReady(false);
+    pdf.getPage(pageNum).then(page=>{
+      const vp=page.getViewport({scale:1.5}), cv=canvasRef.current; if(!cv) return;
+      cv.width=vp.width; cv.height=vp.height; setImgSz({w:vp.width,h:vp.height});
+      page.render({canvasContext:cv.getContext("2d"),viewport:vp}).promise.then(()=>{ setPdfReady(true); setLoadingPdf(false); });
+    });
+  };
+
+  const goPage=n=>{ const p=Math.max(1,Math.min(totalPages,n)); setCurrentPage(p); setTf({x:0,y:0,s:1}); if(pdfDocRef.current) renderPage(pdfDocRef.current,p); };
+
+  const onWheel=useCallback(e=>{
+    e.preventDefault(); const el=containerRef.current; if(!el) return;
+    const r=el.getBoundingClientRect(), mx=e.clientX-r.left-r.width/2, my=e.clientY-r.top-r.height/2, f=e.deltaY<0?1.12:0.89;
+    setTf(t=>{ const ns=Math.max(0.15,Math.min(12,t.s*f)); return{x:mx-(mx-t.x)*(ns/t.s),y:my-(my-t.y)*(ns/t.s),s:ns}; });
+  },[]);
+  useEffect(()=>{ const el=containerRef.current; if(!el) return; el.addEventListener("wheel",onWheel,{passive:false}); return()=>el.removeEventListener("wheel",onWheel); },[onWheel]);
+
+  const gcp=e=>e.touches?{x:e.touches[0].clientX,y:e.touches[0].clientY}:{x:e.clientX,y:e.clientY};
+  const gdist=t=>Math.hypot(t[0].clientX-t[1].clientX,t[0].clientY-t[1].clientY);
+  const gmid=t=>({x:(t[0].clientX+t[1].clientX)/2,y:(t[0].clientY+t[1].clientY)/2});
+  const s2p=(sx,sy)=>{ const el=containerRef.current; if(!el) return{x:0,y:0}; const r=el.getBoundingClientRect(),px=(sx-r.left-r.width/2-tf.x)/tf.s,py=(sy-r.top-r.height/2-tf.y)/tf.s,rw=Math.min(r.width,imgSz.w),rh=rw*imgSz.h/imgSz.w; return{x:(px/rw+0.5)*100,y:(py/rh+0.5)*100}; };
+
+  const onDown=e=>{
+    if(e.touches&&e.touches.length===2){ const mid=gmid(e.touches),el=containerRef.current,r=el.getBoundingClientRect(); pnchRef.current={on:true,d:gdist(e.touches),s:tf.s,tx:tf.x,ty:tf.y,mx:mid.x-r.left-r.width/2,my:mid.y-r.top-r.height/2}; return; }
+    const p=gcp(e);
+    if(mode==="pan"||!zone?.plan_url){ panRef.current={on:true,sx:p.x,sy:p.y,tx:tf.x,ty:tf.y}; }
+    else if(mode==="draw"&&role==="ca"){ const pp=s2p(p.x,p.y); drwRef.current={on:true,sx:pp.x,sy:pp.y}; setDrawRect({x:pp.x,y:pp.y,w:0,h:0}); }
+    else if(mode==="note"||mode==="photo"){ const pp=s2p(p.x,p.y); setPendingPos(pp); e.preventDefault(); return; }
+    e.preventDefault();
+  };
+  const onMove=e=>{
+    if(e.touches&&e.touches.length===2&&pnchRef.current.on){
+      const nd=gdist(e.touches),ns=Math.max(0.15,Math.min(12,pnchRef.current.s*nd/pnchRef.current.d));
+      const mid=gmid(e.touches),el=containerRef.current,r=el.getBoundingClientRect(),mx=mid.x-r.left-r.width/2,my=mid.y-r.top-r.height/2;
+      setTf({x:pnchRef.current.tx+mx-pnchRef.current.mx+(pnchRef.current.mx-pnchRef.current.tx)*(1-ns/pnchRef.current.s),y:pnchRef.current.ty+my-pnchRef.current.my+(pnchRef.current.my-pnchRef.current.ty)*(1-ns/pnchRef.current.s),s:ns});
+      e.preventDefault(); return;
+    }
+    const p=gcp(e);
+    if(panRef.current.on) setTf(t=>({...t,x:panRef.current.tx+p.x-panRef.current.sx,y:panRef.current.ty+p.y-panRef.current.sy}));
+    else if(drwRef.current.on){ const pp=s2p(p.x,p.y); setDrawRect({x:Math.min(drwRef.current.sx,pp.x),y:Math.min(drwRef.current.sy,pp.y),w:Math.abs(pp.x-drwRef.current.sx),h:Math.abs(pp.y-drwRef.current.sy)}); }
+    e.preventDefault();
+  };
+  const onUp=()=>{
+    pnchRef.current.on=false; panRef.current.on=false;
+    if(drwRef.current.on){ drwRef.current.on=false; if(drawRect&&drawRect.w>0.5&&drawRect.h>0.5) onNewZT(drawRect); setDrawRect(null); }
+  };
+
+  const saveNote=async()=>{
+    if(!annotNote.trim()||!pendingPos||!zone?.id) return;
+    const a=await createAnnotation({zone_id:zone.id,type:"note",x:pendingPos.x,y:pendingPos.y,texte:annotNote,couleur:NC_COL.red,auteur_role:role});
+    setAnnotations(p=>[...p,a]); setAnnotNote(""); setPendingPos(null); setMode("pan");
+  };
+
+  const handlePhotoUpload=async e=>{
+    const file=e.target.files[0]; if(!file||!pendingPhotoPos||!zone?.id) return;
+    const legende=window.prompt("Légende (optionnel):")||"";
+    try{ const row=await uploadPhoto(zone.id,file,{x:pendingPhotoPos.x,y:pendingPhotoPos.y,legende,type:"general",auteur_role:role}); setPhotos(p=>[...p,row]); }
+    catch(err){ alert("Erreur photo: "+err.message); }
+    setPendingPhotoPos(null); setMode("pan"); e.target.value="";
+  };
+
+  const STATUSES=Object.fromEntries(Object.entries(ALL_STATUSES).filter(([k])=>(activeStatuses||Object.keys(ALL_STATUSES)).includes(k)));
+  const visibleZT=(zone?.zones_travail||[]).filter(zt=>filterStatus==="all"||zt.status===filterStatus);
+  const cw=containerRef.current?containerRef.current.clientWidth:700;
+
+  const modeBtn=(m,label)=><button onClick={()=>setMode(m)} style={{fontSize:11,padding:"4px 9px",borderRadius:5,border:"1px solid "+(mode===m?NC_COL.red:"#ccc"),background:mode===m?NC_COL.red:"white",color:mode===m?"white":NC_COL.gray,cursor:"pointer",fontWeight:mode===m?700:400}}>{label}</button>;
+
+  return <div>
+    <div style={{display:"flex",alignItems:"center",gap:5,marginBottom:6,flexWrap:"wrap"}}>
+      {zone?.plan_url&&<>
+        {modeBtn("pan","✥ Nav")}
+        {role==="ca"&&modeBtn("draw","⬜ Zone")}
+        {modeBtn("note","📝 Note")}
+        {modeBtn("photo","📷 Photo")}
+        <div style={{width:1,height:18,background:"#ddd",margin:"0 2px"}}/>
+      </>}
+      <select value={filterStatus} onChange={e=>setFilterStatus(e.target.value)} style={{fontSize:11,padding:"3px 7px",borderRadius:5,border:"1px solid #ddd",background:"white"}}>
+        <option value="all">Tous statuts</option>
+        {Object.entries(STATUSES).map(([k,v])=><option key={k} value={k}>{v.label}</option>)}
+      </select>
+      <div style={{display:"flex",gap:4,marginLeft:4}}>
+        {[["zones","Z"],["annotations","A"],["photos","P"],["nc","NC"]].map(([k,l])=>(
+          <button key={k} onClick={()=>setShowLayers(p=>({...p,[k]:!p[k]}))} style={{fontSize:10,padding:"3px 7px",borderRadius:4,border:"1px solid #ddd",background:showLayers[k]?NC_COL.dark:"white",color:showLayers[k]?"white":NC_COL.gray,cursor:"pointer"}}>{l}</button>
+        ))}
+      </div>
+      {totalPages>1&&<div style={{display:"flex",alignItems:"center",gap:3,marginLeft:"auto"}}>
+        <button onClick={()=>goPage(currentPage-1)} disabled={currentPage<=1} style={{width:26,height:26,borderRadius:5,border:"1px solid #ddd",background:"white",cursor:"pointer",fontSize:13,display:"flex",alignItems:"center",justifyContent:"center"}}>‹</button>
+        <span style={{fontSize:11,color:NC_COL.gray,whiteSpace:"nowrap"}}>{currentPage}/{totalPages}</span>
+        <button onClick={()=>goPage(currentPage+1)} disabled={currentPage>=totalPages} style={{width:26,height:26,borderRadius:5,border:"1px solid #ddd",background:"white",cursor:"pointer",fontSize:13,display:"flex",alignItems:"center",justifyContent:"center"}}>›</button>
+      </div>}
+      <div style={{display:"flex",gap:3,marginLeft:"auto"}}>
+        {[["−",()=>setTf(t=>({...t,s:Math.max(0.15,t.s/1.3)}))],["+",()=>setTf(t=>({...t,s:Math.min(12,t.s*1.3)}))],["⊡",()=>setTf({x:0,y:0,s:1})]].map(([l,fn])=>(
+          <button key={l} onClick={fn} style={{width:26,height:26,borderRadius:4,border:"1px solid #ddd",background:"white",color:NC_COL.dark,cursor:"pointer",fontSize:13,display:"flex",alignItems:"center",justifyContent:"center"}}>{l}</button>
+        ))}
+        <span style={{fontSize:10,color:NC_COL.gray,alignSelf:"center",marginLeft:2}}>{Math.round(tf.s*100)}%</span>
+      </div>
+    </div>
+
+    <div style={{position:"relative",borderRadius:8,overflow:"hidden",border:"0.5px solid #ddd",background:"#1a1a1a",height:"56vh"}}>
+      <div ref={containerRef} style={{width:"100%",height:"100%",overflow:"hidden",cursor:mode==="draw"&&role==="ca"?"crosshair":mode==="note"||mode==="photo"?"cell":"grab",touchAction:"none"}}
+        onMouseDown={onDown} onMouseMove={onMove} onMouseUp={onUp} onTouchStart={onDown} onTouchMove={onMove} onTouchEnd={onUp}>
+        {!zone?.plan_url?(
+          <div style={{display:"flex",alignItems:"center",justifyContent:"center",height:"100%",fontSize:13,color:"#888"}}>{role==="ca"?"Importez un plan PDF.":"Aucun plan importé."}</div>
+        ):loadingPdf&&!pdfReady?(
+          <div style={{display:"flex",flexDirection:"column",alignItems:"center",justifyContent:"center",height:"100%",gap:12}}>
+            <div style={{width:36,height:36,border:"3px solid rgba(255,255,255,0.15)",borderTop:"3px solid "+NC_COL.red,borderRadius:"50%",animation:"spin 0.8s linear infinite"}}/>
+            <div style={{fontSize:13,color:"#aaa"}}>Chargement du plan…</div>
+            <style>{"@keyframes spin{to{transform:rotate(360deg)}}"}</style>
+          </div>
+        ):(
+          <div style={{position:"absolute",left:"50%",top:"50%",transform:"translate(calc(-50% + "+tf.x+"px), calc(-50% + "+tf.y+"px)) scale("+tf.s+")",transformOrigin:"center center",pointerEvents:"none"}}>
+            {zone.plan_type==="pdf"
+              ?<canvas ref={canvasRef} style={{display:"block",maxWidth:cw+"px",opacity:pdfReady?1:0}}/>
+              :<img src={zone.plan_url} alt="plan" style={{display:"block",maxWidth:cw+"px"}} onLoad={e=>setImgSz({w:e.target.naturalWidth,h:e.target.naturalHeight})}/>
+            }
+            {zone.plan_type==="pdf"&&!pdfReady&&<div style={{position:"absolute",inset:0,display:"flex",alignItems:"center",justifyContent:"center",fontSize:13,color:"#aaa"}}>Rendu…</div>}
+
+            {showLayers.zones&&visibleZT.map((zt,idx)=>{
+              const st=STATUSES[zt.status]||ALL_STATUSES[zt.status];
+              return <div key={zt.id} onClick={e=>{e.stopPropagation();onZTClick(zt);}}
+                style={{position:"absolute",left:zt.rect.x+"%",top:zt.rect.y+"%",width:zt.rect.w+"%",height:zt.rect.h+"%",border:"1.5px solid "+st.color,background:st.bg,borderRadius:2,cursor:"pointer",boxSizing:"border-box",pointerEvents:"all"}}>
+                <div style={{fontSize:9,color:st.color,fontWeight:500,padding:"1px 3px",background:"rgba(255,255,255,0.92)",borderRadius:2,display:"inline-block",maxWidth:"100%",overflow:"hidden",whiteSpace:"nowrap",textOverflow:"ellipsis"}}>{idx+1}. {zt.label||"—"}</div>
+                {zt.type_blocage&&<div style={{position:"absolute",top:-8,right:-4,width:14,height:14,borderRadius:"50%",background:NC_COL.red,display:"flex",alignItems:"center",justifyContent:"center",fontSize:8,color:"white",fontWeight:700}}>!</div>}
+              </div>;
+            })}
+
+            {showLayers.annotations&&annotations.map(a=>(
+              <div key={a.id} onClick={async e=>{e.stopPropagation();if(role==="ca"&&window.confirm("Supprimer cette note ?")){await deleteAnnotation(a.id);setAnnotations(p=>p.filter(x=>x.id!==a.id));}}}
+                style={{position:"absolute",left:a.x+"%",top:a.y+"%",transform:"translate(-50%,-50%)",pointerEvents:"all",cursor:"pointer",zIndex:10}}>
+                <div style={{background:a.couleur||NC_COL.red,color:"white",fontSize:10,padding:"3px 7px",borderRadius:5,whiteSpace:"nowrap",maxWidth:120,overflow:"hidden",textOverflow:"ellipsis",boxShadow:"0 1px 4px rgba(0,0,0,0.3)"}}>{a.texte}</div>
+              </div>
+            ))}
+
+            {showLayers.photos&&photos.map(p=>(
+              <div key={p.id} style={{position:"absolute",left:p.x+"%",top:p.y+"%",transform:"translate(-50%,-50%)",pointerEvents:"all",zIndex:10}}>
+                <div onClick={()=>window.open(p.url,"_blank")} style={{width:24,height:24,borderRadius:"50%",background:"white",border:"2px solid "+NC_COL.blue,display:"flex",alignItems:"center",justifyContent:"center",cursor:"pointer",fontSize:12,boxShadow:"0 1px 4px rgba(0,0,0,0.3)"}}>📷</div>
+                {p.legende&&<div style={{fontSize:9,color:"white",background:"rgba(0,0,0,0.6)",padding:"2px 5px",borderRadius:3,whiteSpace:"nowrap",marginTop:2}}>{p.legende}</div>}
+              </div>
+            ))}
+
+            {showLayers.nc&&ncs.map((nc,i)=>(
+              <div key={nc.id} style={{position:"absolute",left:20+i*4+"%",top:"3%",pointerEvents:"all",zIndex:10}}>
+                <div style={{background:GRAVITE_NC[nc.gravite]||NC_COL.red,color:"white",fontSize:9,padding:"2px 6px",borderRadius:4,cursor:"pointer",fontWeight:700}}>NC{nc.numero||i+1}</div>
+              </div>
+            ))}
+
+            {drawRect&&drawRect.w>0&&<div style={{position:"absolute",left:drawRect.x+"%",top:drawRect.y+"%",width:drawRect.w+"%",height:drawRect.h+"%",border:"1px dashed "+NC_COL.red,background:NC_COL.redBg,borderRadius:2,pointerEvents:"none",boxSizing:"border-box"}}/>}
+          </div>
+        )}
+      </div>
+    </div>
+
+    {pendingPos&&mode==="note"&&<Modal title="Ajouter une note" onClose={()=>setPendingPos(null)}>
+      <Field label="Note"><textarea value={annotNote} onChange={e=>setAnnotNote(e.target.value)} rows={3} style={{...inp,resize:"vertical"}} autoFocus placeholder="Saisir la note…"/></Field>
+      <div style={{display:"flex",gap:8}}><SBtn primary onClick={saveNote} style={{flex:1}}>Ajouter</SBtn><SBtn onClick={()=>setPendingPos(null)} style={{flex:1}}>Annuler</SBtn></div>
+    </Modal>}
+
+    {pendingPos&&mode==="photo"&&(()=>{ setPendingPhotoPos(pendingPos); setPendingPos(null); setTimeout(()=>photoInputRef.current?.click(),100); return null; })()}
+    <input ref={photoInputRef} type="file" accept="image/*" capture="environment" style={{display:"none"}} onChange={handlePhotoUpload}/>
+  </div>;
+}
+
+// ── ZT Modal ──────────────────────────────────────────────────────────────────
+function ZTModal({zt,role,equipes,activeStatuses,zoneId,chantierIdForEssais,onSave,onDelete,onClose,pushToast}){
+  const [form,setForm]=useState({...zt});
+  const [tab,setTab]=useState("statut");
+  const [materiaux,setMateriaux]=useState([]);
+  const [essais,setEssais]=useState([]);
+  const [history,setHistory]=useState([]);
+  const [newMat,setNewMat]=useState({designation:"",quantite:1,unite:"pce",reference:"",date_besoin:""});
+  const [newEssai,setNewEssai]=useState({type:"debit",designation:"",valeur_prevue:"",valeur_mesuree:"",unite:"m³/h",date_mesure:TODAY,mesure_par:""});
+  const [saving,setSaving]=useState(false);
+  const STATUSES=Object.fromEntries(Object.entries(ALL_STATUSES).filter(([k])=>(activeStatuses||Object.keys(ALL_STATUSES)).includes(k)));
+
+  useEffect(()=>{
+    if(!zt.isNew){
+      fetchMateriaux(zt.id).then(setMateriaux).catch(()=>{});
+      fetchHistory(zt.id).then(setHistory).catch(()=>{});
+      if(chantierIdForEssais) fetchEssais(chantierIdForEssais).then(e=>setEssais(e.filter(x=>x.zone_travail_id===zt.id))).catch(()=>{});
+    }
+  },[zt.id]);
+
+  const save=async()=>{ setSaving(true); try{ await onSave(form); }catch(e){ pushToast("Erreur: "+e.message,"error"); } setSaving(false); };
+
+  const addMat=async()=>{
+    if(!newMat.designation.trim()) return;
+    const r=await createMateriau({zone_travail_id:zt.id,...newMat});
+    setMateriaux(p=>[...p,r]); setNewMat({designation:"",quantite:1,unite:"pce",reference:"",date_besoin:""}); pushToast("Ajouté");
+  };
+  const updateMatStatut=async(id,statut)=>{ const r=await updateMateriau(id,{statut}); setMateriaux(p=>p.map(x=>x.id===id?r:x)); };
+
+  const addEssai=async()=>{
+    if(!newEssai.valeur_mesuree) return;
+    const ecart=newEssai.valeur_prevue?(parseFloat(newEssai.valeur_mesuree)-parseFloat(newEssai.valeur_prevue)):null;
+    const conforme=ecart!==null?Math.abs(ecart/parseFloat(newEssai.valeur_prevue))<0.1:null;
+    const r=await createEssai({...newEssai,zone_travail_id:zt.id,chantier_id:chantierIdForEssais,ecart,conforme,valeur_prevue:parseFloat(newEssai.valeur_prevue)||null,valeur_mesuree:parseFloat(newEssai.valeur_mesuree)});
+    setEssais(p=>[...p,r]); setNewEssai({type:"debit",designation:"",valeur_prevue:"",valeur_mesuree:"",unite:"m³/h",date_mesure:TODAY,mesure_par:""}); pushToast("Mesure ajoutée");
+  };
+
+  const tabs=[{k:"statut",l:"Statut"},{k:"heures",l:"Heures"},{k:"materiaux",l:"Matériaux"+(materiaux.filter(m=>m.statut==="manquant").length>0?" ⚠":"")},{k:"essais",l:"Essais"},{k:"historique",l:"Historique"}];
+
+  return <Modal title={zt.isNew?"Nouvelle zone":"Zone de travail"} onClose={onClose} wide>
+    {!zt.isNew&&<div style={{display:"flex",gap:4,flexWrap:"wrap",marginBottom:14,borderBottom:"1px solid #eee",paddingBottom:8}}>
+      {tabs.map(t=><button key={t.k} onClick={()=>setTab(t.k)} style={{fontSize:12,padding:"4px 10px",borderRadius:5,border:"1px solid "+(tab===t.k?NC_COL.red:"#ddd"),background:tab===t.k?NC_COL.red:"white",color:tab===t.k?"white":NC_COL.dark,cursor:"pointer"}}>{t.l}</button>)}
+    </div>}
+
+    {(zt.isNew||tab==="statut")&&<>
+      {role==="ca"&&<>
+        <Field label="Libellé"><input value={form.label||""} onChange={e=>setForm(p=>({...p,label:e.target.value}))} placeholder="Ex: Gaine principale RDC" style={inp}/></Field>
+        <Field label="Équipe assignée">
+          <select value={form.equipe||""} onChange={e=>setForm(p=>({...p,equipe:e.target.value}))} style={sel_style}>
+            <option value="">— Aucune —</option>
+            {equipes.map(eq=><option key={eq.id} value={eq.name}>{eq.name}{eq.responsable?" ("+eq.responsable+")":""}</option>)}
+          </select>
+        </Field>
+      </>}
+      {!zt.isNew&&<>
+        {(role==="monteur"||role==="chef")&&<>
+          <Field label="Votre équipe">
+            <select value={form.equipe||""} onChange={e=>setForm(p=>({...p,equipe:e.target.value}))} style={sel_style}>
+              <option value="">— Sélectionner —</option>
+              {equipes.map(eq=><option key={eq.id} value={eq.name}>{eq.name}</option>)}
+            </select>
+          </Field>
+          <Field label="Date de pose"><input type="date" value={form.date_pose||""} onChange={e=>setForm(p=>({...p,date_pose:e.target.value}))} style={inp}/></Field>
+        </>}
+        {role==="ca"&&<Field label="Date de pose"><div style={{fontSize:13,color:form.date_pose?NC_COL.dark:NC_COL.gray,padding:"6px 0"}}>{form.date_pose?fmtDate(form.date_pose):"Non renseignée"}</div></Field>}
+        <Field label="Statut global">
+          <div style={{display:"grid",gridTemplateColumns:"1fr 1fr",gap:5}}>
+            {Object.entries(STATUSES).map(([k,v])=>(
+              <div key={k} onClick={()=>setForm(p=>({...p,status:k}))} style={{padding:8,borderRadius:6,border:"1.5px solid "+(form.status===k?v.color:"#e0e0e0"),background:form.status===k?v.bg:"#fafafa",cursor:"pointer",fontSize:12,color:form.status===k?v.color:NC_COL.gray,textAlign:"center",fontWeight:form.status===k?700:400}}>{v.label}</div>
+            ))}
+          </div>
+        </Field>
+        <div style={{display:"grid",gridTemplateColumns:"1fr 1fr 1fr",gap:8,marginBottom:12}}>
+          {[["statut_nappe_h","Nappe haute"],["statut_nappe_b","Nappe basse"],["statut_terminaux","Terminaux"]].map(([field,label])=>(
+            <div key={field}>
+              <div style={{fontSize:10,color:NC_COL.gray,marginBottom:4,fontWeight:700,textTransform:"uppercase"}}>{label}</div>
+              <select value={form[field]||"todo"} onChange={e=>setForm(p=>({...p,[field]:e.target.value}))} style={{...sel_style,fontSize:11}}>
+                {Object.entries(STATUSES).map(([k,v])=><option key={k} value={k}>{v.label}</option>)}
+              </select>
+            </div>
+          ))}
+        </div>
+        {form.status==="blocked"&&<>
+          <Field label="Type de blocage">
+            <select value={form.type_blocage||""} onChange={e=>setForm(p=>({...p,type_blocage:e.target.value}))} style={sel_style}>
+              <option value="">— Sélectionner —</option>
+              {Object.entries(TYPE_BLOCAGE).map(([k,v])=><option key={k} value={k}>{v}</option>)}
+            </select>
+          </Field>
+          <Field label="Commentaire"><textarea value={form.comment||""} onChange={e=>setForm(p=>({...p,comment:e.target.value}))} rows={2} style={{...inp,resize:"vertical"}}/></Field>
+        </>}
+      </>}
+      {zt.isNew&&<div style={{fontSize:12,color:NC_COL.gray,padding:"7px 10px",background:"#f8f8f8",borderRadius:6,marginBottom:10,borderLeft:"3px solid "+NC_COL.gray}}>Statut et date de pose renseignés par les monteurs.</div>}
+    </>}
+
+    {tab==="heures"&&<>
+      <div style={{display:"grid",gridTemplateColumns:"1fr 1fr",gap:12}}>
+        <Field label="Heures prévues (h)"><input type="number" min="0" step="0.5" value={form.heures_prevues||""} onChange={e=>setForm(p=>({...p,heures_prevues:e.target.value}))} style={inp}/></Field>
+        <Field label="Heures réalisées (h)"><input type="number" min="0" step="0.5" value={form.heures_realisees||""} onChange={e=>setForm(p=>({...p,heures_realisees:e.target.value}))} style={inp}/></Field>
+        <Field label="Coût unitaire (CHF/h)"><input type="number" min="0" step="0.5" value={form.cout_unitaire||""} onChange={e=>setForm(p=>({...p,cout_unitaire:e.target.value}))} style={inp}/></Field>
+      </div>
+      {form.heures_prevues>0&&<div style={{padding:"10px 14px",background:"#f8f8f8",borderRadius:7,marginTop:4}}>
+        <div style={{fontSize:13,color:NC_COL.dark,fontWeight:500,marginBottom:4}}>Synthèse financière</div>
+        <div style={{display:"grid",gridTemplateColumns:"1fr 1fr 1fr",gap:8}}>
+          {[["Budget prévu",((form.heures_prevues||0)*(form.cout_unitaire||0)).toFixed(2)+" CHF",NC_COL.dark],["Coût réalisé",((form.heures_realisees||0)*(form.cout_unitaire||0)).toFixed(2)+" CHF",NC_COL.dark],["Écart",(((form.heures_realisees||0)-(form.heures_prevues||0))*(form.cout_unitaire||0)).toFixed(2)+" CHF",(form.heures_realisees||0)>(form.heures_prevues||0)?NC_COL.red:NC_COL.green]].map(([l,v,c])=>(
+            <div key={l} style={{textAlign:"center"}}><div style={{fontSize:10,color:NC_COL.gray}}>{l}</div><div style={{fontSize:15,fontWeight:700,color:c}}>{v}</div></div>
+          ))}
+        </div>
+      </div>}
+    </>}
+
+    {tab==="materiaux"&&<>
+      {materiaux.map(m=>(
+        <div key={m.id} style={{display:"flex",alignItems:"center",gap:8,padding:"6px 0",borderBottom:"1px solid #f5f5f5",flexWrap:"wrap"}}>
+          <div style={{flex:1,minWidth:100}}>
+            <div style={{fontSize:13,color:NC_COL.dark,fontWeight:500}}>{m.designation}</div>
+            <div style={{fontSize:11,color:NC_COL.gray}}>{m.quantite} {m.unite}{m.reference?" · Réf: "+m.reference:""}{m.date_besoin?" · "+fmtDate(m.date_besoin):""}</div>
+          </div>
+          <select value={m.statut} onChange={e=>updateMatStatut(m.id,e.target.value)} style={{fontSize:11,padding:"3px 6px",border:"1px solid #ddd",borderRadius:5,color:m.statut==="manquant"?NC_COL.red:m.statut==="commande"?NC_COL.amber:NC_COL.green}}>
+            <option value="manquant">Manquant</option><option value="commande">Commandé</option><option value="livre">Livré</option>
+          </select>
+          <button onClick={async()=>{await deleteMateriau(m.id);setMateriaux(p=>p.filter(x=>x.id!==m.id));}} style={{width:22,height:22,borderRadius:4,border:"1px solid #fcc",background:"#fff5f5",color:NC_COL.red,cursor:"pointer",fontSize:12,display:"flex",alignItems:"center",justifyContent:"center",padding:0}}>×</button>
+        </div>
+      ))}
+      {materiaux.length===0&&<Muted>Aucun matériau.</Muted>}
+      <Divider/>
+      <div style={{fontSize:12,fontWeight:700,color:NC_COL.dark,marginBottom:8}}>Ajouter</div>
+      <Field label="Désignation"><input value={newMat.designation} onChange={e=>setNewMat(p=>({...p,designation:e.target.value}))} placeholder="Ex: Gaine rect. 400x200" style={inp}/></Field>
+      <div style={{display:"grid",gridTemplateColumns:"1fr 1fr 1fr",gap:8}}>
+        <Field label="Qté"><input type="number" min="0" step="0.1" value={newMat.quantite} onChange={e=>setNewMat(p=>({...p,quantite:e.target.value}))} style={inp}/></Field>
+        <Field label="Unité"><select value={newMat.unite} onChange={e=>setNewMat(p=>({...p,unite:e.target.value}))} style={sel_style}>{["pce","ml","m²","kg","lot"].map(u=><option key={u}>{u}</option>)}</select></Field>
+        <Field label="Référence"><input value={newMat.reference} onChange={e=>setNewMat(p=>({...p,reference:e.target.value}))} style={inp}/></Field>
+      </div>
+      <Field label="Date de besoin"><input type="date" value={newMat.date_besoin} onChange={e=>setNewMat(p=>({...p,date_besoin:e.target.value}))} style={inp}/></Field>
+      <SBtn primary onClick={addMat}>Ajouter</SBtn>
+    </>}
+
+    {tab==="essais"&&<>
+      {essais.map(e=>(
+        <div key={e.id} style={{display:"flex",alignItems:"center",gap:8,padding:"6px 0",borderBottom:"1px solid #f5f5f5",flexWrap:"wrap"}}>
+          <div style={{flex:1}}><div style={{fontSize:13,color:NC_COL.dark,fontWeight:500}}>{TYPE_ESSAI[e.type]||e.type}{e.designation?" — "+e.designation:""}</div><div style={{fontSize:11,color:NC_COL.gray}}>Prévu: {e.valeur_prevue||"—"} · Mesuré: {e.valeur_mesuree} {e.unite}</div></div>
+          <Badge label={e.conforme===true?"✓ Conforme":e.conforme===false?"✗ Non conforme":"—"} color={e.conforme===true?NC_COL.green:e.conforme===false?NC_COL.red:NC_COL.gray} bg={e.conforme===true?NC_COL.greenBg:e.conforme===false?NC_COL.redBg:"#f5f5f5"}/>
+          <button onClick={async()=>{await deleteEssai(e.id);setEssais(p=>p.filter(x=>x.id!==e.id));}} style={{width:22,height:22,borderRadius:4,border:"1px solid #fcc",background:"#fff5f5",color:NC_COL.red,cursor:"pointer",fontSize:12,padding:0}}>×</button>
+        </div>
+      ))}
+      {essais.length===0&&<Muted>Aucune mesure.</Muted>}
+      <Divider/>
+      <div style={{display:"grid",gridTemplateColumns:"1fr 1fr",gap:8}}>
+        <Field label="Type"><select value={newEssai.type} onChange={e=>setNewEssai(p=>({...p,type:e.target.value}))} style={sel_style}>{Object.entries(TYPE_ESSAI).map(([k,v])=><option key={k} value={k}>{v}</option>)}</select></Field>
+        <Field label="Désignation"><input value={newEssai.designation} onChange={e=>setNewEssai(p=>({...p,designation:e.target.value}))} placeholder="Ex: CTA RDC" style={inp}/></Field>
+        <Field label="Valeur prévue"><input type="number" value={newEssai.valeur_prevue} onChange={e=>setNewEssai(p=>({...p,valeur_prevue:e.target.value}))} style={inp}/></Field>
+        <Field label="Valeur mesurée"><input type="number" value={newEssai.valeur_mesuree} onChange={e=>setNewEssai(p=>({...p,valeur_mesuree:e.target.value}))} style={inp}/></Field>
+        <Field label="Unité"><input value={newEssai.unite} onChange={e=>setNewEssai(p=>({...p,unite:e.target.value}))} placeholder="m³/h, Pa, dB…" style={inp}/></Field>
+        <Field label="Mesuré par"><input value={newEssai.mesure_par} onChange={e=>setNewEssai(p=>({...p,mesure_par:e.target.value}))} style={inp}/></Field>
+        <Field label="Date"><input type="date" value={newEssai.date_mesure} onChange={e=>setNewEssai(p=>({...p,date_mesure:e.target.value}))} style={inp}/></Field>
+      </div>
+      <SBtn primary onClick={addEssai}>Enregistrer</SBtn>
+    </>}
+
+    {tab==="historique"&&<>
+      {history.length===0&&<Muted>Aucun historique.</Muted>}
+      {history.map(h=>(
+        <div key={h.id} style={{display:"flex",gap:10,padding:"6px 0",borderBottom:"1px solid #f0f0f0"}}>
+          <div style={{width:30,height:30,borderRadius:5,background:NC_COL.redBg,display:"flex",alignItems:"center",justifyContent:"center",fontSize:10,fontWeight:700,color:NC_COL.red,flexShrink:0}}>{h.role==="ca"?"CA":h.role==="chef"?"CH":"MT"}</div>
+          <div><div style={{fontSize:13,color:NC_COL.dark,fontWeight:500}}>{h.action}{h.detail?" — "+h.detail:""}</div><div style={{fontSize:11,color:NC_COL.gray}}>{fmtTs(h.created_at)}</div></div>
+        </div>
+      ))}
+    </>}
+
+    <Divider/>
+    <div style={{display:"flex",gap:8}}>
+      <SBtn primary onClick={save} style={{flex:1}} disabled={saving}>{saving?"…":"Enregistrer"}</SBtn>
+      {!zt.isNew&&role==="ca"&&<SBtn danger onClick={()=>onDelete(zt.id)}>Supprimer</SBtn>}
+      <SBtn onClick={onClose} style={{flex:1}}>Annuler</SBtn>
+    </div>
+  </Modal>;
+}
+
+// ── Gantt ─────────────────────────────────────────────────────────────────────
+function GanttView({chantiers}){
   const [selChantier,setSelChantier]=useState(chantiers[0]?.id||null);
   const [weekBase,setWeekBase]=useState(TODAY);
   const [zones,setZones]=useState([]);
@@ -124,35 +525,25 @@ function GanttView({chantiers,pushToast}){
   const dayLabels=["Lun","Mar","Mer","Jeu","Ven","Sam","Dim"];
 
   useEffect(()=>{
-    if(!selChantier)return;
+    if(!selChantier) return;
     setLoading(true);
-    // Fetch all ZT for chantier via nested join
     import('./supabase').then(({supabase})=>{
-      supabase.from('zones_travail')
-        .select('*, zones(name,niveau_id,niveaux:niveau_id(name,batiment_id,batiments:batiment_id(name,chantier_id)))')
-        .order('date_pose')
-        .then(({data})=>{
-          const filtered=(data||[]).filter(zt=>zt.zones?.niveaux?.batiments?.chantier_id===selChantier);
-          setZones(filtered);setLoading(false);
-        });
+      supabase.from('zones_travail').select('*, zones(name,niveau_id,niveaux:niveau_id(name,batiment_id,batiments:batiment_id(name,chantier_id)))').order('date_pose')
+        .then(({data})=>{ setZones((data||[]).filter(zt=>zt.zones?.niveaux?.batiments?.chantier_id===selChantier)); setLoading(false); });
     });
   },[selChantier,weekBase]);
 
   const zonesWithDates=zones.filter(z=>z.date_pose);
-  const pct=(a,b)=>b===0?0:Math.round(a/b*100);
 
   return <div style={{padding:14,fontFamily:"Arial,sans-serif"}}>
     <div style={{display:"flex",gap:10,alignItems:"center",flexWrap:"wrap",marginBottom:14}}>
       <div style={{fontSize:15,fontWeight:700,color:NC_COL.dark}}>Planning Gantt</div>
-      <select value={selChantier||""} onChange={e=>setSelChantier(e.target.value)} style={{...sel_style,width:200}}>
-        {chantiers.map(c=><option key={c.id} value={c.id}>{c.name}</option>)}
-      </select>
-      <button onClick={()=>{const d=new Date(days[0]);d.setDate(d.getDate()-7);setWeekBase(d.toISOString().split('T')[0]);}} style={{...SBtn_style}}>‹ Semaine préc.</button>
+      <select value={selChantier||""} onChange={e=>setSelChantier(e.target.value)} style={{...sel_style,width:200}}>{chantiers.map(c=><option key={c.id} value={c.id}>{c.name}</option>)}</select>
+      <button onClick={()=>{const d=new Date(days[0]);d.setDate(d.getDate()-7);setWeekBase(d.toISOString().split('T')[0]);}} style={SBtn_style}>‹ Préc.</button>
       <button onClick={()=>setWeekBase(TODAY)} style={{...SBtn_style,border:"1px solid "+NC_COL.red,color:NC_COL.red}}>Aujourd'hui</button>
-      <button onClick={()=>{const d=new Date(days[0]);d.setDate(d.getDate()+7);setWeekBase(d.toISOString().split('T')[0]);}} style={{...SBtn_style}}>Semaine suiv. ›</button>
+      <button onClick={()=>{const d=new Date(days[0]);d.setDate(d.getDate()+7);setWeekBase(d.toISOString().split('T')[0]);}} style={SBtn_style}>Suiv. ›</button>
     </div>
     <div style={{background:"white",border:"1px solid #e8e8e8",borderRadius:8,overflow:"auto"}}>
-      {/* Header jours */}
       <div style={{display:"grid",gridTemplateColumns:"200px repeat(7,1fr)",borderBottom:"1px solid #eee",background:"#f8f8f8"}}>
         <div style={{padding:"8px 12px",fontSize:12,fontWeight:700,color:NC_COL.gray}}>Zone</div>
         {days.map((d,i)=>{
@@ -183,20 +574,8 @@ function GanttView({chantiers,pushToast}){
         </div>;
       })}
     </div>
-    {/* Stats semaine */}
-    <div style={{marginTop:14,display:"grid",gridTemplateColumns:"repeat(auto-fit,minmax(120px,1fr))",gap:8}}>
-      {Object.entries(ALL_STATUSES).map(([k,v])=>{
-        const n=zonesWithDates.filter(z=>z.status===k&&days.includes(z.date_pose)).length;
-        if(!n)return null;
-        return <div key={k} style={{background:"white",border:"1px solid #e8e8e8",borderRadius:8,padding:"10px 12px",borderTop:"3px solid "+v.color}}>
-          <div style={{fontSize:11,color:NC_COL.gray}}>{v.label}</div>
-          <div style={{fontSize:20,fontWeight:700,color:v.color}}>{n}</div>
-        </div>;
-      })}
-    </div>
   </div>;
 }
-const SBtn_style={fontSize:12,padding:"5px 10px",borderRadius:5,border:"1px solid #ddd",background:"white",color:NC_COL.dark,cursor:"pointer",fontFamily:"Arial,sans-serif"};
 
 // ── Aujourd'hui ───────────────────────────────────────────────────────────────
 function TodayView({role,chantiers,equipes,currentEquipe,onOpenZone,pushToast}){
@@ -207,26 +586,23 @@ function TodayView({role,chantiers,equipes,currentEquipe,onOpenZone,pushToast}){
   const [effectifs,setEffectifs]=useState([]);
   const [editEff,setEditEff]=useState(null);
 
-  useEffect(()=>{ if(!selChantier)return; fetchEffectifs(selChantier,date).then(setEffectifs).catch(()=>{}); },[selChantier,date]);
-
-  const load=useCallback(d=>{
+  useEffect(()=>{ if(!selChantier) return; fetchEffectifs(selChantier,date).then(setEffectifs).catch(()=>{}); },[selChantier,date]);
+  useEffect(()=>{
     setLoading(true);
-    fetchAllZTByDate(d).then(data=>{ setItems(data||[]); setLoading(false); }).catch(()=>{ setLoading(false); pushToast("Erreur","error"); });
-  },[]);
-  useEffect(()=>{ load(date); },[date]);
+    fetchAllZTByDate(date).then(data=>{ setItems(data||[]); setLoading(false); }).catch(()=>{ setLoading(false); pushToast("Erreur","error"); });
+  },[date]);
 
   const getPath=zt=>{ try{const z=zt.zones,n=z.niveaux,b=n.batiments,c=b.chantiers;return c.name+" › "+b.name+" › "+n.name+" › "+z.name;}catch{return "—";} };
   const byEquipe={};
-  items.forEach(zt=>{ const eq=zt.equipe||"Non assigné"; if(!byEquipe[eq])byEquipe[eq]=[]; byEquipe[eq].push(zt); });
+  items.forEach(zt=>{ const eq=zt.equipe||"Non assigné"; if(!byEquipe[eq]) byEquipe[eq]=[]; byEquipe[eq].push(zt); });
+  const totalPrevus=effectifs.reduce((s,e)=>s+e.monteurs_prevus,0);
+  const totalPresents=effectifs.reduce((s,e)=>s+e.monteurs_presents,0);
 
   const saveEff=async(eqId,prevus,presents)=>{
     try{ await upsertEffectif({chantier_id:selChantier,date,equipe_id:eqId,monteurs_prevus:parseInt(prevus)||0,monteurs_presents:parseInt(presents)||0}); fetchEffectifs(selChantier,date).then(setEffectifs); pushToast("Effectif mis à jour"); }
     catch(e){pushToast("Erreur: "+e.message,"error");}
     setEditEff(null);
   };
-
-  const totalPrevus=effectifs.reduce((s,e)=>s+e.monteurs_prevus,0);
-  const totalPresents=effectifs.reduce((s,e)=>s+e.monteurs_presents,0);
 
   return <div style={{padding:14,fontFamily:"Arial,sans-serif"}}>
     <div style={{display:"flex",gap:10,alignItems:"center",flexWrap:"wrap",marginBottom:14}}>
@@ -236,14 +612,13 @@ function TodayView({role,chantiers,equipes,currentEquipe,onOpenZone,pushToast}){
       {chantiers.length>1&&<select value={selChantier||""} onChange={e=>setSelChantier(e.target.value)} style={{...sel_style,width:180}}>{chantiers.map(c=><option key={c.id} value={c.id}>{c.name}</option>)}</select>}
     </div>
 
-    {/* Effectifs */}
     <SCard title="Effectifs du jour" accent={NC_COL.dark} action={
       <div style={{display:"flex",gap:8,alignItems:"center"}}>
         <Badge label={totalPresents+"/"+totalPrevus+" monteurs"} color={totalPresents<totalPrevus?NC_COL.red:NC_COL.green} bg={totalPresents<totalPrevus?NC_COL.redBg:NC_COL.greenBg}/>
-        {role==="ca"||role==="chef"?<SBtn small primary onClick={()=>setEditEff({equipe_id:"",monteurs_prevus:0,monteurs_presents:0})}>+ Équipe</SBtn>:null}
+        {(role==="ca"||role==="chef")&&<SBtn small primary onClick={()=>setEditEff({equipe_id:"",monteurs_prevus:0,monteurs_presents:0})}>+ Équipe</SBtn>}
       </div>
     }>
-      {effectifs.length===0&&<Muted>Aucun effectif renseigné pour cette date.</Muted>}
+      {effectifs.length===0&&<Muted>Aucun effectif renseigné.</Muted>}
       {effectifs.map(e=>{
         const eq=equipes.find(x=>x.id===e.equipe_id);
         const ok=e.monteurs_presents>=e.monteurs_prevus;
@@ -251,13 +626,11 @@ function TodayView({role,chantiers,equipes,currentEquipe,onOpenZone,pushToast}){
           {eq&&<div style={{width:10,height:10,borderRadius:2,background:eq.couleur,flexShrink:0}}/>}
           <span style={{flex:1,fontSize:13,color:NC_COL.dark,fontWeight:500}}>{eq?.name||"Équipe inconnue"}</span>
           <span style={{fontSize:12,color:ok?NC_COL.green:NC_COL.red,fontWeight:500}}>{e.monteurs_presents}/{e.monteurs_prevus} présents</span>
-          {!ok&&<Badge label={"−"+(e.monteurs_prevus-e.monteurs_presents)} color={"#c0392b"} bg={"rgba(192,57,43,0.1)"}/>}
           {(role==="ca"||role==="chef")&&<button onClick={()=>setEditEff({...e})} style={{fontSize:11,padding:"3px 8px",borderRadius:5,border:"1px solid #ddd",background:"white",cursor:"pointer"}}>✎</button>}
         </div>;
       })}
     </SCard>
 
-    {/* Zones du jour par équipe */}
     {loading&&<Muted>Chargement…</Muted>}
     {!loading&&items.length===0&&<Muted>Aucune zone prévue pour cette date.</Muted>}
     {!loading&&Object.entries(byEquipe).map(([eq,zts])=>{
@@ -270,7 +643,7 @@ function TodayView({role,chantiers,equipes,currentEquipe,onOpenZone,pushToast}){
               <div style={{fontSize:13,fontWeight:600,color:NC_COL.dark}}>{zt.label||"—"}</div>
               <div style={{fontSize:11,color:NC_COL.gray}}>{getPath(zt)}</div>
               {zt.status==="blocked"&&zt.type_blocage&&<div style={{fontSize:11,color:NC_COL.red,marginTop:2}}>⚠ {TYPE_BLOCAGE[zt.type_blocage]||zt.type_blocage}</div>}
-              {zt.heures_prevues>0&&<div style={{fontSize:11,color:NC_COL.gray}}>⏱ {zt.heures_realisees||0}h / {zt.heures_prevues}h prévues</div>}
+              {zt.heures_prevues>0&&<div style={{fontSize:11,color:NC_COL.gray}}>⏱ {zt.heures_realisees||0}h / {zt.heures_prevues}h</div>}
             </div>
             <Badge label={ALL_STATUSES[zt.status].label} color={ALL_STATUSES[zt.status].color} bg={ALL_STATUSES[zt.status].bg}/>
           </div>
@@ -278,7 +651,6 @@ function TodayView({role,chantiers,equipes,currentEquipe,onOpenZone,pushToast}){
       </SCard>;
     })}
 
-    {/* Modal effectif */}
     {editEff&&<Modal title="Effectif équipe" onClose={()=>setEditEff(null)}>
       <Field label="Équipe">
         <select value={editEff.equipe_id||""} onChange={e=>setEditEff(p=>({...p,equipe_id:e.target.value}))} style={sel_style}>
@@ -287,8 +659,8 @@ function TodayView({role,chantiers,equipes,currentEquipe,onOpenZone,pushToast}){
         </select>
       </Field>
       <div style={{display:"grid",gridTemplateColumns:"1fr 1fr",gap:10}}>
-        <Field label="Monteurs prévus"><input type="number" min="0" value={editEff.monteurs_prevus} onChange={e=>setEditEff(p=>({...p,monteurs_prevus:e.target.value}))} style={inp}/></Field>
-        <Field label="Présents aujourd'hui"><input type="number" min="0" value={editEff.monteurs_presents} onChange={e=>setEditEff(p=>({...p,monteurs_presents:e.target.value}))} style={inp}/></Field>
+        <Field label="Prévus"><input type="number" min="0" value={editEff.monteurs_prevus} onChange={e=>setEditEff(p=>({...p,monteurs_prevus:e.target.value}))} style={inp}/></Field>
+        <Field label="Présents"><input type="number" min="0" value={editEff.monteurs_presents} onChange={e=>setEditEff(p=>({...p,monteurs_presents:e.target.value}))} style={inp}/></Field>
       </div>
       <div style={{display:"flex",gap:8}}>
         <SBtn primary onClick={()=>saveEff(editEff.equipe_id,editEff.monteurs_prevus,editEff.monteurs_presents)} style={{flex:1}}>Enregistrer</SBtn>
@@ -298,471 +670,17 @@ function TodayView({role,chantiers,equipes,currentEquipe,onOpenZone,pushToast}){
   </div>;
 }
 
-// ── PlanViewer v7 (annotations + photos + NC) ─────────────────────────────────
-function PlanViewer({zone,role,onZTClick,onNewZT,activeStatuses,equipes,pushToast}){
-  const containerRef=useRef(null),canvasRef=useRef(null);
-  const [tf,setTf]=useState({x:0,y:0,s:1});
-  const [pdfReady,setPdfReady]=useState(false);
-  const [imgSz,setImgSz]=useState({w:800,h:600});
-  const [mode,setMode]=useState("pan"); // pan|draw|note|fleche
-  const [pdfLib,setPdfLib]=useState(null);
-  const [drawRect,setDrawRect]=useState(null);
-  const [currentPage,setCurrentPage]=useState(1);
-  const [totalPages,setTotalPages]=useState(1);
-  const [filterStatus,setFilterStatus]=useState("all");
-  const [loadingPdf,setLoadingPdf]=useState(false);
-  const [annotations,setAnnotations]=useState([]);
-  const [photos,setPhotos]=useState([]);
-  const [ncs,setNcs]=useState([]);
-  const [showLayers,setShowLayers]=useState({zones:true,annotations:true,photos:true,nc:true});
-  const [annotNote,setAnnotNote]=useState("");
-  const [pendingPos,setPendingPos]=useState(null);
-  const pdfDocRef=useRef(null),panRef=useRef({on:false}),drwRef=useRef({on:false}),pnchRef=useRef({on:false}),pdfCacheRef=useRef({});
-  const photoInputRef=useRef(null);
-  const [pendingPhotoPos,setPendingPhotoPos]=useState(null);
-
-  useEffect(()=>{
-    if(window.pdfjsLib){
-      window.pdfjsLib.GlobalWorkerOptions.workerSrc="/pdf.worker.min.js";
-      setPdfLib(window.pdfjsLib); return;
-    }
-    const s=document.createElement("script");
-    s.src="/pdf.min.js";
-    s.onload=()=>{
-      window.pdfjsLib.GlobalWorkerOptions.workerSrc="/pdf.worker.min.js";
-      setPdfLib(window.pdfjsLib);
-    };
-    s.onerror=()=>{ console.error("Impossible de charger pdf.js"); };
-    document.head.appendChild(s);
-  },[]);
-
-  useEffect(()=>{
-    setTf({x:0,y:0,s:1});setPdfReady(false);setDrawRect(null);setMode("pan");setCurrentPage(1);setTotalPages(1);pdfDocRef.current=null;
-    if(zone?.id){ fetchAnnotations(zone.id).then(setAnnotations).catch(()=>{}); fetchPhotos(zone.id).then(setPhotos).catch(()=>{}); fetchNCs(zone.id).then(setNcs).catch(()=>{}); }
-  },[zone&&zone.id]);
-
-  useEffect(()=>{
-    if(!zone?.plan_url||zone.plan_type!=="pdf"||!pdfLib||!canvasRef.current)return;
-    setPdfReady(false);setLoadingPdf(true);
-    const url=zone.plan_url;
-
-    const tryLoad = async () => {
-      // Méthode 1 : cache
-      if(pdfCacheRef.current[url]) return pdfCacheRef.current[url];
-      // Méthode 2 : fetch + ArrayBuffer (contourne CORS sur certains navigateurs)
-      try {
-        const resp = await fetch(url, { mode: 'cors' });
-        if(!resp.ok) throw new Error("HTTP "+resp.status);
-        const buf = await resp.arrayBuffer();
-        const pdf = await pdfLib.getDocument({ data: buf }).promise;
-        pdfCacheRef.current[url] = pdf;
-        return pdf;
-      } catch(e1) {
-        console.warn("Méthode fetch échouée:", e1.message, "— tentative URL directe");
-        // Méthode 3 : URL directe via pdf.js
-        const pdf = await pdfLib.getDocument({ url, withCredentials: false }).promise;
-        pdfCacheRef.current[url] = pdf;
-        return pdf;
-      }
-    };
-
-    tryLoad()
-      .then(pdf=>{ pdfDocRef.current=pdf; setTotalPages(pdf.numPages); renderPage(pdf,1); })
-      .catch(err=>{
-        console.error("PDF load failed:", err);
-        setLoadingPdf(false);
-        setPdfReady(false);
-        pushToast && pushToast("Impossible de charger le PDF : "+err.message, "error");
-      });
-  },[zone&&zone.plan_url,pdfLib]);
-  },[zone&&zone.plan_url,pdfLib]);
-
-  const renderPage=(pdf,pageNum)=>{
-    if(!pdf||!canvasRef.current)return;
-    setPdfReady(false);
-    pdf.getPage(pageNum).then(page=>{
-      const vp=page.getViewport({scale:1.5}),cv=canvasRef.current;if(!cv)return;
-      cv.width=vp.width;cv.height=vp.height;setImgSz({w:vp.width,h:vp.height});
-      page.render({canvasContext:cv.getContext("2d"),viewport:vp}).promise.then(()=>{setPdfReady(true);setLoadingPdf(false);});
-    });
-  };
-  const goPage=n=>{const p=Math.max(1,Math.min(totalPages,n));setCurrentPage(p);setTf({x:0,y:0,s:1});if(pdfDocRef.current)renderPage(pdfDocRef.current,p);};
-
-  const onWheel=useCallback(e=>{
-    e.preventDefault();const el=containerRef.current;if(!el)return;
-    const r=el.getBoundingClientRect(),mx=e.clientX-r.left-r.width/2,my=e.clientY-r.top-r.height/2,f=e.deltaY<0?1.12:0.89;
-    setTf(t=>{const ns=Math.max(0.15,Math.min(12,t.s*f));return{x:mx-(mx-t.x)*(ns/t.s),y:my-(my-t.y)*(ns/t.s),s:ns};});
-  },[]);
-  useEffect(()=>{const el=containerRef.current;if(!el)return;el.addEventListener("wheel",onWheel,{passive:false});return()=>el.removeEventListener("wheel",onWheel);},[onWheel]);
-
-  const gcp=e=>e.touches?{x:e.touches[0].clientX,y:e.touches[0].clientY}:{x:e.clientX,y:e.clientY};
-  const gdist=t=>Math.hypot(t[0].clientX-t[1].clientX,t[0].clientY-t[1].clientY);
-  const gmid=t=>({x:(t[0].clientX+t[1].clientX)/2,y:(t[0].clientY+t[1].clientY)/2});
-  const s2p=(sx,sy)=>{const el=containerRef.current;if(!el)return{x:0,y:0};const r=el.getBoundingClientRect(),px=(sx-r.left-r.width/2-tf.x)/tf.s,py=(sy-r.top-r.height/2-tf.y)/tf.s,rw=Math.min(r.width,imgSz.w),rh=rw*imgSz.h/imgSz.w;return{x:(px/rw+0.5)*100,y:(py/rh+0.5)*100};};
-
-  const onDown=e=>{
-    if(e.touches&&e.touches.length===2){const mid=gmid(e.touches),el=containerRef.current,r=el.getBoundingClientRect();pnchRef.current={on:true,d:gdist(e.touches),s:tf.s,tx:tf.x,ty:tf.y,mx:mid.x-r.left-r.width/2,my:mid.y-r.top-r.height/2};return;}
-    const p=gcp(e);
-    if(mode==="pan"||!zone?.plan_url){panRef.current={on:true,sx:p.x,sy:p.y,tx:tf.x,ty:tf.y};}
-    else if(mode==="draw"&&role==="ca"){const pp=s2p(p.x,p.y);drwRef.current={on:true,sx:pp.x,sy:pp.y};setDrawRect({x:pp.x,y:pp.y,w:0,h:0});}
-    else if(mode==="note"||mode==="photo"){ const pp=s2p(p.x,p.y); setPendingPos(pp); e.preventDefault(); return; }
-    e.preventDefault();
-  };
-  const onMove=e=>{
-    if(e.touches&&e.touches.length===2&&pnchRef.current.on){
-      const nd=gdist(e.touches),ns=Math.max(0.15,Math.min(12,pnchRef.current.s*nd/pnchRef.current.d));
-      const mid=gmid(e.touches),el=containerRef.current,r=el.getBoundingClientRect(),mx=mid.x-r.left-r.width/2,my=mid.y-r.top-r.height/2;
-      setTf({x:pnchRef.current.tx+mx-pnchRef.current.mx+(pnchRef.current.mx-pnchRef.current.tx)*(1-ns/pnchRef.current.s),y:pnchRef.current.ty+my-pnchRef.current.my+(pnchRef.current.my-pnchRef.current.ty)*(1-ns/pnchRef.current.s),s:ns});
-      e.preventDefault();return;
-    }
-    const p=gcp(e);
-    if(panRef.current.on)setTf(t=>({...t,x:panRef.current.tx+p.x-panRef.current.sx,y:panRef.current.ty+p.y-panRef.current.sy}));
-    else if(drwRef.current.on){const pp=s2p(p.x,p.y);setDrawRect({x:Math.min(drwRef.current.sx,pp.x),y:Math.min(drwRef.current.sy,pp.y),w:Math.abs(pp.x-drwRef.current.sx),h:Math.abs(pp.y-drwRef.current.sy)});}
-    e.preventDefault();
-  };
-  const onUp=()=>{
-    pnchRef.current.on=false;panRef.current.on=false;
-    if(drwRef.current.on){drwRef.current.on=false;if(drawRect&&drawRect.w>0.5&&drawRect.h>0.5)onNewZT(drawRect);setDrawRect(null);}
-  };
-
-  const saveNote=async()=>{
-    if(!annotNote.trim()||!pendingPos||!zone?.id)return;
-    const a=await createAnnotation({zone_id:zone.id,type:"note",x:pendingPos.x,y:pendingPos.y,texte:annotNote,couleur:NC_COL.red,auteur_role:role});
-    setAnnotations(p=>[...p,a]);setAnnotNote("");setPendingPos(null);setMode("pan");
-  };
-
-  const handlePhotoUpload=async e=>{
-    const file=e.target.files[0];if(!file||!pendingPhotoPos||!zone?.id)return;
-    const legende=window.prompt("Légende de la photo (optionnel):")||"";
-    try{
-      const row=await uploadPhoto(zone.id,file,{x:pendingPhotoPos.x,y:pendingPhotoPos.y,legende,type:"general",auteur_role:role});
-      setPhotos(p=>[...p,row]);
-    }catch(err){alert("Erreur upload photo: "+err.message);}
-    setPendingPhotoPos(null);setMode("pan");e.target.value="";
-  };
-
-  const STATUSES=Object.fromEntries(Object.entries(ALL_STATUSES).filter(([k])=>(activeStatuses||Object.keys(ALL_STATUSES)).includes(k)));
-  const visibleZT=(zone?.zones_travail||[]).filter(zt=>filterStatus==="all"||zt.status===filterStatus);
-  const cw=containerRef.current?containerRef.current.clientWidth:700;
-
-  const modeBtn=(m,label)=><button onClick={()=>setMode(m)} style={{fontSize:11,padding:"4px 9px",borderRadius:5,border:"1px solid "+(mode===m?NC_COL.red:"#ccc"),background:mode===m?NC_COL.red:"white",color:mode===m?"white":NC_COL.gray,cursor:"pointer",fontWeight:mode===m?700:400}}>{label}</button>;
-
-  return <div>
-    {/* Toolbar */}
-    <div style={{display:"flex",alignItems:"center",gap:5,marginBottom:6,flexWrap:"wrap"}}>
-      {zone?.plan_url&&<>
-        {modeBtn("pan","✥ Nav")}
-        {role==="ca"&&modeBtn("draw","⬜ Zone")}
-        {modeBtn("note","📝 Note")}
-        {modeBtn("photo","📷 Photo")}
-        <div style={{width:1,height:18,background:"#ddd",margin:"0 2px"}}/>
-      </>}
-      <select value={filterStatus} onChange={e=>setFilterStatus(e.target.value)} style={{fontSize:11,padding:"3px 7px",borderRadius:5,border:"1px solid #ddd",background:"white"}}>
-        <option value="all">Tous statuts</option>
-        {Object.entries(STATUSES).map(([k,v])=><option key={k} value={k}>{v.label}</option>)}
-      </select>
-      {/* Calques */}
-      <div style={{display:"flex",gap:4,marginLeft:4}}>
-        {[["zones","Z"],["annotations","A"],["photos","P"],["nc","NC"]].map(([k,l])=>(
-          <button key={k} onClick={()=>setShowLayers(p=>({...p,[k]:!p[k]}))} style={{fontSize:10,padding:"3px 7px",borderRadius:4,border:"1px solid #ddd",background:showLayers[k]?NC_COL.dark:"white",color:showLayers[k]?"white":NC_COL.gray,cursor:"pointer"}}>{l}</button>
-        ))}
-      </div>
-      {totalPages>1&&<div style={{display:"flex",alignItems:"center",gap:3,marginLeft:"auto"}}>
-        <button onClick={()=>goPage(currentPage-1)} disabled={currentPage<=1} style={{width:26,height:26,borderRadius:5,border:"1px solid #ddd",background:"white",cursor:"pointer",fontSize:13,display:"flex",alignItems:"center",justifyContent:"center"}}>‹</button>
-        <span style={{fontSize:11,color:NC_COL.gray,whiteSpace:"nowrap"}}>{currentPage}/{totalPages}</span>
-        <button onClick={()=>goPage(currentPage+1)} disabled={currentPage>=totalPages} style={{width:26,height:26,borderRadius:5,border:"1px solid #ddd",background:"white",cursor:"pointer",fontSize:13,display:"flex",alignItems:"center",justifyContent:"center"}}>›</button>
-      </div>}
-      <div style={{display:"flex",gap:3,marginLeft:"auto"}}>
-        {[["−",()=>setTf(t=>({...t,s:Math.max(0.15,t.s/1.3)}))],["+",()=>setTf(t=>({...t,s:Math.min(12,t.s*1.3)}))],["⊡",()=>setTf({x:0,y:0,s:1})]].map(([l,fn])=>(
-          <button key={l} onClick={fn} style={{width:26,height:26,borderRadius:4,border:"1px solid #ddd",background:"white",color:NC_COL.dark,cursor:"pointer",fontSize:13,display:"flex",alignItems:"center",justifyContent:"center"}}>{l}</button>
-        ))}
-        <span style={{fontSize:10,color:NC_COL.gray,alignSelf:"center",marginLeft:2}}>{Math.round(tf.s*100)}%</span>
-      </div>
-    </div>
-
-    {/* Canvas */}
-    <div style={{position:"relative",borderRadius:8,overflow:"hidden",border:"0.5px solid #ddd",background:"#1a1a1a",height:"56vh"}}>
-      <div ref={containerRef} style={{width:"100%",height:"100%",overflow:"hidden",cursor:mode==="draw"&&role==="ca"?"crosshair":mode==="note"||mode==="photo"?"cell":"grab",touchAction:"none"}}
-        onMouseDown={onDown} onMouseMove={onMove} onMouseUp={onUp} onTouchStart={onDown} onTouchMove={onMove} onTouchEnd={onUp}>
-        {!zone?.plan_url?(
-          <div style={{display:"flex",alignItems:"center",justifyContent:"center",height:"100%",fontSize:13,color:"#888"}}>{role==="ca"?"Importez un plan PDF.":"Aucun plan importé."}</div>
-        ):loadingPdf&&!pdfReady?(
-          <div style={{display:"flex",flexDirection:"column",alignItems:"center",justifyContent:"center",height:"100%",gap:12}}>
-            <div style={{width:36,height:36,border:"3px solid rgba(255,255,255,0.15)",borderTop:"3px solid "+NC_COL.red,borderRadius:"50%",animation:"spin 0.8s linear infinite"}}/>
-            <div style={{fontSize:13,color:"#aaa"}}>Chargement du plan…</div>
-            <style>{"@keyframes spin{to{transform:rotate(360deg)}}"}</style>
-          </div>
-        ):(
-          <div style={{position:"absolute",left:"50%",top:"50%",transform:"translate(calc(-50% + "+tf.x+"px), calc(-50% + "+tf.y+"px)) scale("+tf.s+")",transformOrigin:"center center",pointerEvents:"none"}}>
-            {zone.plan_type==="pdf"?<canvas ref={canvasRef} style={{display:"block",maxWidth:cw+"px",opacity:pdfReady?1:0}}/>:<img src={zone.plan_url} alt="plan" style={{display:"block",maxWidth:cw+"px"}} onLoad={e=>setImgSz({w:e.target.naturalWidth,h:e.target.naturalHeight})}/>}
-            {zone.plan_type==="pdf"&&!pdfReady&&<div style={{position:"absolute",inset:0,display:"flex",alignItems:"center",justifyContent:"center",fontSize:13,color:"#aaa"}}>Rendu…</div>}
-
-            {/* Zones de travail */}
-            {showLayers.zones&&visibleZT.map((zt,idx)=>{
-              const st=STATUSES[zt.status]||ALL_STATUSES[zt.status];
-              return <div key={zt.id} onClick={e=>{e.stopPropagation();onZTClick(zt);}} style={{position:"absolute",left:zt.rect.x+"%",top:zt.rect.y+"%",width:zt.rect.w+"%",height:zt.rect.h+"%",border:"1.5px solid "+st.color,background:st.bg,borderRadius:2,cursor:"pointer",boxSizing:"border-box",pointerEvents:"all"}}>
-                <div style={{fontSize:9,color:st.color,fontWeight:500,padding:"1px 3px",background:"rgba(255,255,255,0.92)",borderRadius:2,display:"inline-block",maxWidth:"100%",overflow:"hidden",whiteSpace:"nowrap",textOverflow:"ellipsis"}}>{idx+1}. {zt.label||"—"}</div>
-                {zt.type_blocage&&<div style={{position:"absolute",top:-8,right:-4,width:14,height:14,borderRadius:"50%",background:NC_COL.red,display:"flex",alignItems:"center",justifyContent:"center",fontSize:8,color:"white",fontWeight:700}}>!</div>}
-              </div>;
-            })}
-
-            {/* Annotations */}
-            {showLayers.annotations&&annotations.map(a=>(
-              <div key={a.id} onClick={async e=>{e.stopPropagation();if(role==="ca"&&window.confirm("Supprimer cette note ?")){await deleteAnnotation(a.id);setAnnotations(p=>p.filter(x=>x.id!==a.id));}}} style={{position:"absolute",left:a.x+"%",top:a.y+"%",transform:"translate(-50%,-50%)",pointerEvents:"all",cursor:"pointer",zIndex:10}}>
-                <div style={{background:a.couleur||NC_COL.red,color:"white",fontSize:10,padding:"3px 7px",borderRadius:5,whiteSpace:"nowrap",maxWidth:120,overflow:"hidden",textOverflow:"ellipsis",boxShadow:"0 1px 4px rgba(0,0,0,0.3)"}}>{a.texte}</div>
-              </div>
-            ))}
-
-            {/* Photos */}
-            {showLayers.photos&&photos.map(p=>(
-              <div key={p.id} style={{position:"absolute",left:p.x+"%",top:p.y+"%",transform:"translate(-50%,-50%)",pointerEvents:"all",zIndex:10}}>
-                <div onClick={()=>window.open(p.url,"_blank")} style={{width:24,height:24,borderRadius:"50%",background:"white",border:"2px solid "+NC_COL.blue,display:"flex",alignItems:"center",justifyContent:"center",cursor:"pointer",fontSize:12,boxShadow:"0 1px 4px rgba(0,0,0,0.3)"}}>📷</div>
-                {p.legende&&<div style={{fontSize:9,color:"white",background:"rgba(0,0,0,0.6)",padding:"2px 5px",borderRadius:3,whiteSpace:"nowrap",marginTop:2}}>{p.legende}</div>}
-              </div>
-            ))}
-
-            {/* NC pins */}
-            {showLayers.nc&&ncs.map((nc,i)=>(
-              <div key={nc.id} style={{position:"absolute",left:20+i*4+"%",top:"3%",pointerEvents:"all",zIndex:10}}>
-                <div style={{background:GRAVITE_NC[nc.gravite]||NC_COL.red,color:"white",fontSize:9,padding:"2px 6px",borderRadius:4,cursor:"pointer",fontWeight:700}}>NC{nc.numero||i+1}</div>
-              </div>
-            ))}
-
-            {drawRect&&drawRect.w>0&&<div style={{position:"absolute",left:drawRect.x+"%",top:drawRect.y+"%",width:drawRect.w+"%",height:drawRect.h+"%",border:"1px dashed "+NC_COL.red,background:NC_COL.redBg,borderRadius:2,pointerEvents:"none",boxSizing:"border-box"}}/>}
-          </div>
-        )}
-      </div>
-    </div>
-
-    {/* Modal note */}
-    {pendingPos&&mode==="note"&&<Modal title="Ajouter une note" onClose={()=>setPendingPos(null)}>
-      <Field label="Note"><textarea value={annotNote} onChange={e=>setAnnotNote(e.target.value)} rows={3} style={{...inp,resize:"vertical"}} autoFocus placeholder="Saisir la note…"/></Field>
-      <div style={{display:"flex",gap:8}}><SBtn primary onClick={saveNote} style={{flex:1}}>Ajouter</SBtn><SBtn onClick={()=>setPendingPos(null)} style={{flex:1}}>Annuler</SBtn></div>
-    </Modal>}
-
-    {/* Photo upload déclenché par clic sur plan */}
-    {pendingPos&&mode==="photo"&&(()=>{ setPendingPhotoPos(pendingPos); setPendingPos(null); setTimeout(()=>photoInputRef.current?.click(),100); return null; })()}
-    <input ref={photoInputRef} type="file" accept="image/*" capture="environment" style={{display:"none"}} onChange={handlePhotoUpload}/>
-  </div>;
-}
-
-// ── Zone de travail Modal (v7) ─────────────────────────────────────────────────
-function ZTModal({zt,role,equipes,activeStatuses,zoneId,chantierIdForEssais,onSave,onDelete,onClose,pushToast}){
-  const [form,setForm]=useState({...zt});
-  const [tab,setTab]=useState("statut");
-  const [materiaux,setMateriaux]=useState([]);
-  const [essais,setEssais]=useState([]);
-  const [history,setHistory]=useState([]);
-  const [newMat,setNewMat]=useState({designation:"",quantite:1,unite:"pce",reference:"",date_besoin:""});
-  const [newEssai,setNewEssai]=useState({type:"debit",designation:"",valeur_prevue:"",valeur_mesuree:"",unite:"m³/h",date_mesure:TODAY,mesure_par:""});
-  const [saving,setSaving]=useState(false);
-  const STATUSES=Object.fromEntries(Object.entries(ALL_STATUSES).filter(([k])=>(activeStatuses||Object.keys(ALL_STATUSES)).includes(k)));
-
-  useEffect(()=>{
-    if(!zt.isNew){
-      fetchMateriaux(zt.id).then(setMateriaux).catch(()=>{});
-      fetchHistory(zt.id).then(setHistory).catch(()=>{});
-      if(chantierIdForEssais) fetchEssais(chantierIdForEssais).then(e=>setEssais(e.filter(x=>x.zone_travail_id===zt.id))).catch(()=>{});
-    }
-  },[zt.id]);
-
-  const save=async()=>{
-    setSaving(true);
-    try{ await onSave(form); }
-    catch(e){ pushToast("Erreur: "+e.message,"error"); }
-    setSaving(false);
-  };
-
-  const addMat=async()=>{
-    if(!newMat.designation.trim())return;
-    const r=await createMateriau({zone_travail_id:zt.id,...newMat});
-    setMateriaux(p=>[...p,r]);setNewMat({designation:"",quantite:1,unite:"pce",reference:"",date_besoin:""});
-    pushToast("Matériau ajouté");
-  };
-
-  const updateMatStatut=async(id,statut)=>{
-    const r=await updateMateriau(id,{statut});
-    setMateriaux(p=>p.map(x=>x.id===id?r:x));
-  };
-
-  const addEssai=async()=>{
-    if(!newEssai.valeur_mesuree)return;
-    const ecart=newEssai.valeur_prevue?(parseFloat(newEssai.valeur_mesuree)-parseFloat(newEssai.valeur_prevue)):null;
-    const conforme=ecart!==null?Math.abs(ecart/parseFloat(newEssai.valeur_prevue))<0.1:null;
-    const r=await createEssai({...newEssai,zone_travail_id:zt.id,chantier_id:chantierIdForEssais,ecart,conforme,valeur_prevue:parseFloat(newEssai.valeur_prevue)||null,valeur_mesuree:parseFloat(newEssai.valeur_mesuree)});
-    setEssais(p=>[...p,r]);setNewEssai({type:"debit",designation:"",valeur_prevue:"",valeur_mesuree:"",unite:"m³/h",date_mesure:TODAY,mesure_par:""});
-    pushToast("Mesure ajoutée");
-  };
-
-  const tabs=[{k:"statut",l:"Statut"},{k:"heures",l:"Heures"},{k:"materiaux",l:"Matériaux"+(materiaux.filter(m=>m.statut==="manquant").length>0?" ⚠":"")},{k:"essais",l:"Essais"},{k:"historique",l:"Historique"}];
-
-  return <Modal title={zt.isNew?"Nouvelle zone":"Zone de travail"} onClose={onClose} wide>
-    {/* Tabs */}
-    {!zt.isNew&&<div style={{display:"flex",gap:4,flexWrap:"wrap",marginBottom:14,borderBottom:"1px solid #eee",paddingBottom:8}}>
-      {tabs.map(t=><button key={t.k} onClick={()=>setTab(t.k)} style={{fontSize:12,padding:"4px 10px",borderRadius:5,border:"1px solid "+(tab===t.k?NC_COL.red:"#ddd"),background:tab===t.k?NC_COL.red:"white",color:tab===t.k?"white":NC_COL.dark,cursor:"pointer"}}>{t.l}</button>)}
-    </div>}
-
-    {/* Statut */}
-    {(zt.isNew||tab==="statut")&&<>
-      {role==="ca"&&<>
-        <Field label="Libellé"><input value={form.label||""} onChange={e=>setForm(p=>({...p,label:e.target.value}))} placeholder="Ex: Gaine principale RDC" style={inp}/></Field>
-        <Field label="Équipe assignée">
-          <select value={form.equipe||""} onChange={e=>setForm(p=>({...p,equipe:e.target.value}))} style={sel_style}>
-            <option value="">— Aucune —</option>
-            {equipes.map(eq=><option key={eq.id} value={eq.name}>{eq.name}{eq.responsable?" ("+eq.responsable+")":""}</option>)}
-          </select>
-        </Field>
-      </>}
-      {!zt.isNew&&<>
-        {(role==="monteur"||role==="chef")&&<>
-          <Field label="Votre équipe">
-            <select value={form.equipe||""} onChange={e=>setForm(p=>({...p,equipe:e.target.value}))} style={sel_style}>
-              <option value="">— Sélectionner —</option>
-              {equipes.map(eq=><option key={eq.id} value={eq.name}>{eq.name}</option>)}
-            </select>
-          </Field>
-          <Field label="Date de pose"><input type="date" value={form.date_pose||""} onChange={e=>setForm(p=>({...p,date_pose:e.target.value}))} style={inp}/></Field>
-        </>}
-        {role==="ca"&&<Field label="Date de pose"><div style={{fontSize:13,color:form.date_pose?NC_COL.dark:NC_COL.gray,padding:"6px 0"}}>{form.date_pose?fmtDate(form.date_pose):"Non renseignée"}</div></Field>}
-
-        <Field label="Statut global">
-          <div style={{display:"grid",gridTemplateColumns:"1fr 1fr",gap:5}}>
-            {Object.entries(STATUSES).map(([k,v])=>(
-              <div key={k} onClick={()=>setForm(p=>({...p,status:k}))} style={{padding:8,borderRadius:6,border:"1.5px solid "+(form.status===k?v.color:"#e0e0e0"),background:form.status===k?v.bg:"#fafafa",cursor:"pointer",fontSize:12,color:form.status===k?v.color:NC_COL.gray,textAlign:"center",fontWeight:form.status===k?700:400}}>{v.label}</div>
-            ))}
-          </div>
-        </Field>
-
-        {/* Sous-statuts ventilation */}
-        <div style={{display:"grid",gridTemplateColumns:"1fr 1fr 1fr",gap:8,marginBottom:12}}>
-          {[["statut_nappe_h","Nappe haute"],["statut_nappe_b","Nappe basse"],["statut_terminaux","Terminaux"]].map(([field,label])=>(
-            <div key={field}>
-              <div style={{fontSize:10,color:NC_COL.gray,marginBottom:4,fontWeight:700,textTransform:"uppercase"}}>{label}</div>
-              <select value={form[field]||"todo"} onChange={e=>setForm(p=>({...p,[field]:e.target.value}))} style={{...sel_style,fontSize:11}}>
-                {Object.entries(STATUSES).map(([k,v])=><option key={k} value={k}>{v.label}</option>)}
-              </select>
-            </div>
-          ))}
-        </div>
-
-        {form.status==="blocked"&&<>
-          <Field label="Type de blocage">
-            <select value={form.type_blocage||""} onChange={e=>setForm(p=>({...p,type_blocage:e.target.value}))} style={sel_style}>
-              <option value="">— Sélectionner —</option>
-              {Object.entries(TYPE_BLOCAGE).map(([k,v])=><option key={k} value={k}>{v}</option>)}
-            </select>
-          </Field>
-          <Field label="Commentaire"><textarea value={form.comment||""} onChange={e=>setForm(p=>({...p,comment:e.target.value}))} rows={2} style={{...inp,resize:"vertical"}}/></Field>
-        </>}
-      </>}
-      {zt.isNew&&<div style={{fontSize:12,color:NC_COL.gray,padding:"7px 10px",background:"#f8f8f8",borderRadius:6,marginBottom:10,borderLeft:"3px solid "+NC_COL.gray}}>Statut et date de pose renseignés par les monteurs.</div>}
-    </>}
-
-    {/* Heures */}
-    {tab==="heures"&&<>
-      <div style={{display:"grid",gridTemplateColumns:"1fr 1fr",gap:12}}>
-        <Field label="Heures prévues (h)"><input type="number" min="0" step="0.5" value={form.heures_prevues||""} onChange={e=>setForm(p=>({...p,heures_prevues:e.target.value}))} style={inp}/></Field>
-        <Field label="Heures réalisées (h)"><input type="number" min="0" step="0.5" value={form.heures_realisees||""} onChange={e=>setForm(p=>({...p,heures_realisees:e.target.value}))} style={inp}/></Field>
-        <Field label="Coût unitaire (CHF/h)"><input type="number" min="0" step="0.5" value={form.cout_unitaire||""} onChange={e=>setForm(p=>({...p,cout_unitaire:e.target.value}))} style={inp}/></Field>
-      </div>
-      {form.heures_prevues>0&&<div style={{padding:"10px 14px",background:"#f8f8f8",borderRadius:7,marginTop:4}}>
-        <div style={{fontSize:13,color:NC_COL.dark,fontWeight:500,marginBottom:4}}>Synthèse financière</div>
-        <div style={{display:"grid",gridTemplateColumns:"1fr 1fr 1fr",gap:8}}>
-          {[["Budget prévu",((form.heures_prevues||0)*(form.cout_unitaire||0)).toFixed(2)+" CHF",NC_COL.dark],["Coût réalisé",((form.heures_realisees||0)*(form.cout_unitaire||0)).toFixed(2)+" CHF",NC_COL.dark],["Écart",(((form.heures_realisees||0)-(form.heures_prevues||0))*(form.cout_unitaire||0)).toFixed(2)+" CHF",(form.heures_realisees||0)>(form.heures_prevues||0)?NC_COL.red:NC_COL.green]].map(([l,v,c])=>(
-            <div key={l} style={{textAlign:"center"}}><div style={{fontSize:10,color:NC_COL.gray}}>{l}</div><div style={{fontSize:15,fontWeight:700,color:c}}>{v}</div></div>
-          ))}
-        </div>
-      </div>}
-    </>}
-
-    {/* Matériaux */}
-    {tab==="materiaux"&&<>
-      {materiaux.map(m=>(
-        <div key={m.id} style={{display:"flex",alignItems:"center",gap:8,padding:"6px 0",borderBottom:"1px solid #f5f5f5",flexWrap:"wrap"}}>
-          <div style={{flex:1,minWidth:100}}>
-            <div style={{fontSize:13,color:NC_COL.dark,fontWeight:500}}>{m.designation}</div>
-            <div style={{fontSize:11,color:NC_COL.gray}}>{m.quantite} {m.unite}{m.reference?" · Réf: "+m.reference:""}{m.date_besoin?" · Besoin: "+fmtDate(m.date_besoin):""}</div>
-          </div>
-          <select value={m.statut} onChange={e=>updateMatStatut(m.id,e.target.value)} style={{fontSize:11,padding:"3px 6px",border:"1px solid #ddd",borderRadius:5,color:m.statut==="manquant"?NC_COL.red:m.statut==="commande"?NC_COL.amber:NC_COL.green}}>
-            <option value="manquant">Manquant</option>
-            <option value="commande">Commandé</option>
-            <option value="livre">Livré</option>
-          </select>
-          <button onClick={async()=>{await deleteMateriau(m.id);setMateriaux(p=>p.filter(x=>x.id!==m.id));}} style={{width:22,height:22,borderRadius:4,border:"1px solid #fcc",background:"#fff5f5",color:NC_COL.red,cursor:"pointer",fontSize:12,display:"flex",alignItems:"center",justifyContent:"center",padding:0,flexShrink:0}}>×</button>
-        </div>
-      ))}
-      {materiaux.length===0&&<Muted>Aucun matériau renseigné.</Muted>}
-      <Divider/>
-      <div style={{fontSize:12,fontWeight:700,color:NC_COL.dark,marginBottom:8}}>Ajouter un matériau</div>
-      <Field label="Désignation"><input value={newMat.designation} onChange={e=>setNewMat(p=>({...p,designation:e.target.value}))} placeholder="Ex: Gaine rect. 400x200" style={inp}/></Field>
-      <div style={{display:"grid",gridTemplateColumns:"1fr 1fr 1fr",gap:8}}>
-        <Field label="Qté"><input type="number" min="0" step="0.1" value={newMat.quantite} onChange={e=>setNewMat(p=>({...p,quantite:e.target.value}))} style={inp}/></Field>
-        <Field label="Unité"><select value={newMat.unite} onChange={e=>setNewMat(p=>({...p,unite:e.target.value}))} style={sel_style}>{["pce","ml","m²","kg","lot"].map(u=><option key={u}>{u}</option>)}</select></Field>
-        <Field label="Référence"><input value={newMat.reference} onChange={e=>setNewMat(p=>({...p,reference:e.target.value}))} style={inp}/></Field>
-      </div>
-      <Field label="Date de besoin"><input type="date" value={newMat.date_besoin} onChange={e=>setNewMat(p=>({...p,date_besoin:e.target.value}))} style={inp}/></Field>
-      <SBtn primary onClick={addMat}>Ajouter le matériau</SBtn>
-    </>}
-
-    {/* Essais */}
-    {tab==="essais"&&<>
-      {essais.map(e=>(
-        <div key={e.id} style={{display:"flex",alignItems:"center",gap:8,padding:"6px 0",borderBottom:"1px solid #f5f5f5",flexWrap:"wrap"}}>
-          <div style={{flex:1}}>
-            <div style={{fontSize:13,color:NC_COL.dark,fontWeight:500}}>{TYPE_ESSAI[e.type]||e.type}{e.designation?" — "+e.designation:""}</div>
-            <div style={{fontSize:11,color:NC_COL.gray}}>Prévu: {e.valeur_prevue||"—"} · Mesuré: {e.valeur_mesuree} {e.unite}{e.mesure_par?" · "+e.mesure_par:""} · {fmtDate(e.date_mesure)}</div>
-          </div>
-          <Badge label={e.conforme===true?"✓ Conforme":e.conforme===false?"✗ Non conforme":"—"} color={e.conforme===true?NC_COL.green:e.conforme===false?NC_COL.red:NC_COL.gray} bg={e.conforme===true?NC_COL.greenBg:e.conforme===false?NC_COL.redBg:"#f5f5f5"}/>
-          <button onClick={async()=>{await deleteEssai(e.id);setEssais(p=>p.filter(x=>x.id!==e.id));}} style={{width:22,height:22,borderRadius:4,border:"1px solid #fcc",background:"#fff5f5",color:NC_COL.red,cursor:"pointer",fontSize:12,padding:0,flexShrink:0}}>×</button>
-        </div>
-      ))}
-      {essais.length===0&&<Muted>Aucune mesure enregistrée.</Muted>}
-      <Divider/>
-      <div style={{fontSize:12,fontWeight:700,color:NC_COL.dark,marginBottom:8}}>Nouvelle mesure</div>
-      <div style={{display:"grid",gridTemplateColumns:"1fr 1fr",gap:8}}>
-        <Field label="Type"><select value={newEssai.type} onChange={e=>setNewEssai(p=>({...p,type:e.target.value}))} style={sel_style}>{Object.entries(TYPE_ESSAI).map(([k,v])=><option key={k} value={k}>{v}</option>)}</select></Field>
-        <Field label="Désignation"><input value={newEssai.designation} onChange={e=>setNewEssai(p=>({...p,designation:e.target.value}))} placeholder="Ex: CTA RDC" style={inp}/></Field>
-        <Field label="Valeur prévue"><input type="number" value={newEssai.valeur_prevue} onChange={e=>setNewEssai(p=>({...p,valeur_prevue:e.target.value}))} style={inp}/></Field>
-        <Field label="Valeur mesurée"><input type="number" value={newEssai.valeur_mesuree} onChange={e=>setNewEssai(p=>({...p,valeur_mesuree:e.target.value}))} style={inp}/></Field>
-        <Field label="Unité"><input value={newEssai.unite} onChange={e=>setNewEssai(p=>({...p,unite:e.target.value}))} placeholder="m³/h, Pa, dB…" style={inp}/></Field>
-        <Field label="Mesuré par"><input value={newEssai.mesure_par} onChange={e=>setNewEssai(p=>({...p,mesure_par:e.target.value}))} style={inp}/></Field>
-        <Field label="Date"><input type="date" value={newEssai.date_mesure} onChange={e=>setNewEssai(p=>({...p,date_mesure:e.target.value}))} style={inp}/></Field>
-      </div>
-      <SBtn primary onClick={addEssai}>Enregistrer la mesure</SBtn>
-    </>}
-
-    {/* Historique */}
-    {tab==="historique"&&<>
-      {history.length===0&&<Muted>Aucun historique.</Muted>}
-      {history.map(h=>(
-        <div key={h.id} style={{display:"flex",gap:10,padding:"6px 0",borderBottom:"1px solid #f0f0f0"}}>
-          <div style={{width:30,height:30,borderRadius:5,background:NC_COL.redBg,display:"flex",alignItems:"center",justifyContent:"center",fontSize:10,fontWeight:700,color:NC_COL.red,flexShrink:0}}>{h.role==="ca"?"CA":h.role==="chef"?"CH":"MT"}</div>
-          <div><div style={{fontSize:13,color:NC_COL.dark,fontWeight:500}}>{h.action}{h.detail?" — "+h.detail:""}</div><div style={{fontSize:11,color:NC_COL.gray}}>{fmtTs(h.created_at)}</div></div>
-        </div>
-      ))}
-    </>}
-
-    <Divider/>
-    <div style={{display:"flex",gap:8}}>
-      <SBtn primary onClick={save} style={{flex:1}} disabled={saving}>{saving?"…":"Enregistrer"}</SBtn>
-      {!zt.isNew&&role==="ca"&&<SBtn danger onClick={()=>onDelete(zt.id)}>Supprimer</SBtn>}
-      <SBtn onClick={onClose} style={{flex:1}}>Annuler</SBtn>
-    </div>
-  </Modal>;
-}
-
 // ── NC View ───────────────────────────────────────────────────────────────────
 function NCView({chantiers,equipes,pushToast}){
   const [selChantier,setSelChantier]=useState(chantiers[0]?.id||null);
   const [ncs,setNcs]=useState([]);
   const [loading,setLoading]=useState(false);
   const [editNC,setEditNC]=useState(null);
-  const [newNC,setNewNC]=useState({titre:"",description:"",gravite:"mineure",assignee_equipe_id:"",date_echeance:""});
 
   const load=useCallback(()=>{
-    if(!selChantier)return;
+    if(!selChantier) return;
     setLoading(true);
-    fetchAllNCs(selChantier).then(d=>{setNcs(d);setLoading(false);}).catch(()=>setLoading(false));
+    fetchAllNCs(selChantier).then(d=>{ setNcs(d); setLoading(false); }).catch(()=>setLoading(false));
   },[selChantier]);
   useEffect(()=>load(),[selChantier]);
 
@@ -781,7 +699,7 @@ function NCView({chantiers,equipes,pushToast}){
       ))}
     </div>
     {loading&&<Muted>Chargement…</Muted>}
-    {!loading&&ncs.length===0&&<Muted>Aucune non-conformité enregistrée.</Muted>}
+    {!loading&&ncs.length===0&&<Muted>Aucune non-conformité.</Muted>}
     {ncs.map(nc=>(
       <div key={nc.id} style={{background:"white",border:"1px solid "+GRAVITE_NC[nc.gravite],borderLeft:"4px solid "+GRAVITE_NC[nc.gravite],borderRadius:8,padding:"10px 14px",marginBottom:8,cursor:"pointer"}} onClick={()=>setEditNC({...nc})}>
         <div style={{display:"flex",justifyContent:"space-between",alignItems:"flex-start",gap:8,flexWrap:"wrap"}}>
@@ -790,7 +708,7 @@ function NCView({chantiers,equipes,pushToast}){
             {nc.description&&<div style={{fontSize:12,color:NC_COL.gray,marginTop:2}}>{nc.description}</div>}
             <div style={{display:"flex",gap:6,marginTop:4,flexWrap:"wrap"}}>
               <Badge label={nc.gravite} color={GRAVITE_NC[nc.gravite]} bg={"rgba(0,0,0,0.05)"}/>
-              {nc.equipes&&<Badge label={nc.equipes.name} color={NC_COL.dark} bg={"#f0f0f0"}/>}
+              {nc.equipes&&<Badge label={nc.equipes.name}/>}
               {nc.date_echeance&&<Badge label={"Échéance: "+fmtDate(nc.date_echeance)} color={NC_COL.gray} bg={"#f5f5f5"}/>}
             </div>
           </div>
@@ -803,83 +721,53 @@ function NCView({chantiers,equipes,pushToast}){
       <Field label="Titre"><input value={editNC.titre} onChange={e=>setEditNC(p=>({...p,titre:e.target.value}))} style={inp}/></Field>
       <Field label="Description"><textarea value={editNC.description||""} onChange={e=>setEditNC(p=>({...p,description:e.target.value}))} rows={2} style={{...inp,resize:"vertical"}}/></Field>
       <div style={{display:"grid",gridTemplateColumns:"1fr 1fr",gap:10}}>
-        <Field label="Gravité">
-          <select value={editNC.gravite} onChange={e=>setEditNC(p=>({...p,gravite:e.target.value}))} style={sel_style}>
-            {["mineure","majeure","bloquante"].map(g=><option key={g}>{g}</option>)}
-          </select>
-        </Field>
-        <Field label="Statut">
-          <select value={editNC.statut} onChange={e=>setEditNC(p=>({...p,statut:e.target.value}))} style={sel_style}>
-            {Object.keys(STATUT_NC).map(s=><option key={s} value={s}>{s.replace("_"," ")}</option>)}
-          </select>
-        </Field>
-        <Field label="Équipe assignée">
-          <select value={editNC.assignee_equipe_id||""} onChange={e=>setEditNC(p=>({...p,assignee_equipe_id:e.target.value}))} style={sel_style}>
-            <option value="">— Aucune —</option>
-            {equipes.map(eq=><option key={eq.id} value={eq.id}>{eq.name}</option>)}
-          </select>
-        </Field>
+        <Field label="Gravité"><select value={editNC.gravite} onChange={e=>setEditNC(p=>({...p,gravite:e.target.value}))} style={sel_style}>{["mineure","majeure","bloquante"].map(g=><option key={g}>{g}</option>)}</select></Field>
+        <Field label="Statut"><select value={editNC.statut} onChange={e=>setEditNC(p=>({...p,statut:e.target.value}))} style={sel_style}>{Object.keys(STATUT_NC).map(s=><option key={s} value={s}>{s.replace("_"," ")}</option>)}</select></Field>
+        <Field label="Équipe assignée"><select value={editNC.assignee_equipe_id||""} onChange={e=>setEditNC(p=>({...p,assignee_equipe_id:e.target.value}))} style={sel_style}><option value="">— Aucune —</option>{equipes.map(eq=><option key={eq.id} value={eq.id}>{eq.name}</option>)}</select></Field>
         <Field label="Date d'échéance"><input type="date" value={editNC.date_echeance||""} onChange={e=>setEditNC(p=>({...p,date_echeance:e.target.value}))} style={inp}/></Field>
       </div>
       {(editNC.statut==="levee"||editNC.statut==="validee")&&<Field label="Date de levée"><input type="date" value={editNC.date_levee||""} onChange={e=>setEditNC(p=>({...p,date_levee:e.target.value}))} style={inp}/></Field>}
       <div style={{display:"flex",gap:8,marginTop:8}}>
-        <SBtn primary onClick={async()=>{const r=await updateNC(editNC.id,editNC);setNcs(p=>p.map(x=>x.id===r.id?r:x));setEditNC(null);pushToast("NC mise à jour");}} style={{flex:1}}>Enregistrer</SBtn>
-        <SBtn danger onClick={async()=>{if(!window.confirm("Supprimer cette NC ?"))return;await deleteNC(editNC.id);setNcs(p=>p.filter(x=>x.id!==editNC.id));setEditNC(null);pushToast("NC supprimée");}}>Supprimer</SBtn>
+        <SBtn primary onClick={async()=>{const r=await updateNC(editNC.id,editNC);setNcs(p=>p.map(x=>x.id===r.id?{...r,equipes:equipes.find(e=>e.id===r.assignee_equipe_id)||null}:x));setEditNC(null);pushToast("NC mise à jour");}} style={{flex:1}}>Enregistrer</SBtn>
+        <SBtn danger onClick={async()=>{if(!window.confirm("Supprimer ?"))return;await deleteNC(editNC.id);setNcs(p=>p.filter(x=>x.id!==editNC.id));setEditNC(null);pushToast("Supprimée");}}>Supprimer</SBtn>
         <SBtn onClick={()=>setEditNC(null)} style={{flex:1}}>Annuler</SBtn>
       </div>
     </Modal>}
   </div>;
 }
 
-// ── Dashboard v7 ──────────────────────────────────────────────────────────────
-function Dashboard({allZT,batiments,activeStatuses,chantiers,equipes}){
+// ── Dashboard ─────────────────────────────────────────────────────────────────
+function Dashboard({allZT,batiments,activeStatuses,equipes}){
   const STATUSES=Object.fromEntries(Object.entries(ALL_STATUSES).filter(([k])=>(activeStatuses||Object.keys(ALL_STATUSES)).includes(k)));
   const cnt={}; Object.keys(STATUSES).forEach(k=>{ cnt[k]=allZT.filter(x=>x.status===k).length; });
   const blocked=allZT.filter(x=>x.status==="blocked");
   const pct=(a,b)=>b===0?0:Math.round(a/b*100);
-
-  // Financier
   const totalHPrev=allZT.reduce((s,z)=>s+(parseFloat(z.heures_prevues)||0),0);
   const totalHReal=allZT.reduce((s,z)=>s+(parseFloat(z.heures_realisees)||0),0);
   const totalCoutPrev=allZT.reduce((s,z)=>s+((parseFloat(z.heures_prevues)||0)*(parseFloat(z.cout_unitaire)||0)),0);
   const totalCoutReal=allZT.reduce((s,z)=>s+((parseFloat(z.heures_realisees)||0)*(parseFloat(z.cout_unitaire)||0)),0);
-
   const byBat={};
-  batiments.forEach(b=>{const bzt=allZT.filter(x=>x.batiment_id===b.id);byBat[b.name]={total:bzt.length,done:bzt.filter(x=>x.status==="done").length,blocked:bzt.filter(x=>x.status==="blocked").length,hPrev:bzt.reduce((s,z)=>s+(parseFloat(z.heures_prevues)||0),0),hReal:bzt.reduce((s,z)=>s+(parseFloat(z.heures_realisees)||0),0)};});
-
+  batiments.forEach(b=>{ const bzt=allZT.filter(x=>x.batiment_id===b.id); byBat[b.name]={total:bzt.length,done:bzt.filter(x=>x.status==="done").length,blocked:bzt.filter(x=>x.status==="blocked").length,hPrev:bzt.reduce((s,z)=>s+(parseFloat(z.heures_prevues)||0),0),hReal:bzt.reduce((s,z)=>s+(parseFloat(z.heures_realisees)||0),0)}; });
   const byDate={};
-  allZT.forEach(zt=>{const d=zt.date_pose||"Sans date";if(!byDate[d])byDate[d]={};byDate[d][zt.status]=(byDate[d][zt.status]||0)+1;});
+  allZT.forEach(zt=>{ const d=zt.date_pose||"Sans date"; if(!byDate[d])byDate[d]={}; byDate[d][zt.status]=(byDate[d][zt.status]||0)+1; });
   const dates=Object.keys(byDate).sort();
-
   const byEq={};
-  allZT.forEach(zt=>{const eq=zt.equipe||"Non assigné";if(!byEq[eq])byEq[eq]={total:0,done:0,blocked:0,hPrev:0,hReal:0};byEq[eq].total++;if(zt.status==="done")byEq[eq].done++;if(zt.status==="blocked")byEq[eq].blocked++;byEq[eq].hPrev+=(parseFloat(zt.heures_prevues)||0);byEq[eq].hReal+=(parseFloat(zt.heures_realisees)||0);});
+  allZT.forEach(zt=>{ const eq=zt.equipe||"Non assigné"; if(!byEq[eq])byEq[eq]={total:0,done:0,blocked:0,hPrev:0,hReal:0}; byEq[eq].total++; if(zt.status==="done")byEq[eq].done++; if(zt.status==="blocked")byEq[eq].blocked++; byEq[eq].hPrev+=(parseFloat(zt.heures_prevues)||0); byEq[eq].hReal+=(parseFloat(zt.heures_realisees)||0); });
 
   return <div style={{padding:14,fontFamily:"Arial,sans-serif"}}>
-    {/* KPIs */}
     <div style={{display:"grid",gridTemplateColumns:"repeat(auto-fit,minmax(85px,1fr))",gap:7,marginBottom:14}}>
-      <div style={{background:"white",border:"1px solid #e8e8e8",borderRadius:8,padding:"10px 12px",borderTop:"3px solid "+NC_COL.dark}}>
-        <div style={{fontSize:10,color:NC_COL.gray}}>Total</div><div style={{fontSize:20,fontWeight:700,color:NC_COL.dark}}>{allZT.length}</div>
-      </div>
+      <div style={{background:"white",border:"1px solid #e8e8e8",borderRadius:8,padding:"10px 12px",borderTop:"3px solid "+NC_COL.dark}}><div style={{fontSize:10,color:NC_COL.gray}}>Total</div><div style={{fontSize:20,fontWeight:700,color:NC_COL.dark}}>{allZT.length}</div></div>
       {Object.entries(STATUSES).map(([k,v])=>(
-        <div key={k} style={{background:"white",border:"1px solid #e8e8e8",borderRadius:8,padding:"10px 12px",borderTop:"3px solid "+v.color}}>
-          <div style={{fontSize:10,color:NC_COL.gray}}>{v.label}</div><div style={{fontSize:20,fontWeight:700,color:v.color}}>{cnt[k]||0}</div>
-        </div>
+        <div key={k} style={{background:"white",border:"1px solid #e8e8e8",borderRadius:8,padding:"10px 12px",borderTop:"3px solid "+v.color}}><div style={{fontSize:10,color:NC_COL.gray}}>{v.label}</div><div style={{fontSize:20,fontWeight:700,color:v.color}}>{cnt[k]||0}</div></div>
       ))}
     </div>
-
-    {/* Financier */}
     <SCard title="Tableau financier" accent={NC_COL.dark}>
       <div style={{display:"grid",gridTemplateColumns:"repeat(auto-fit,minmax(130px,1fr))",gap:10}}>
         {[["Heures prévues",totalHPrev.toFixed(1)+"h",NC_COL.dark],["Heures réalisées",totalHReal.toFixed(1)+"h",totalHReal>totalHPrev?NC_COL.red:NC_COL.green],["Budget prévu",totalCoutPrev.toFixed(0)+" CHF",NC_COL.dark],["Coût réalisé",totalCoutReal.toFixed(0)+" CHF",totalCoutReal>totalCoutPrev?NC_COL.red:NC_COL.green],["Écart",((totalCoutReal-totalCoutPrev)).toFixed(0)+" CHF",totalCoutReal>totalCoutPrev?NC_COL.red:NC_COL.green]].map(([l,v,c])=>(
-          <div key={l} style={{background:"#f8f8f8",borderRadius:7,padding:"10px",textAlign:"center"}}>
-            <div style={{fontSize:11,color:NC_COL.gray,marginBottom:3}}>{l}</div>
-            <div style={{fontSize:15,fontWeight:700,color:c}}>{v}</div>
-          </div>
+          <div key={l} style={{background:"#f8f8f8",borderRadius:7,padding:10,textAlign:"center"}}><div style={{fontSize:11,color:NC_COL.gray,marginBottom:3}}>{l}</div><div style={{fontSize:15,fontWeight:700,color:c}}>{v}</div></div>
         ))}
       </div>
     </SCard>
-
-    {/* Avancement bâtiment */}
     <SCard title="Avancement par bâtiment">
       {Object.keys(byBat).length===0?<Muted>Aucune donnée.</Muted>:Object.entries(byBat).map(([name,s])=>(
         <div key={name} style={{marginBottom:12}}>
@@ -887,17 +775,13 @@ function Dashboard({allZT,batiments,activeStatuses,chantiers,equipes}){
             <span style={{color:NC_COL.dark,fontWeight:500}}>{name}</span>
             <span style={{color:NC_COL.gray,fontSize:12}}>{s.done}/{s.total} ({pct(s.done,s.total)}%) · {s.hReal.toFixed(1)}h/{s.hPrev.toFixed(1)}h</span>
           </div>
-          <div style={{height:8,borderRadius:4,background:"#f0f0f0",overflow:"hidden"}}>
-            <div style={{height:"100%",width:pct(s.done,s.total)+"%",background:NC_COL.green,borderRadius:4}}/>
-          </div>
+          <div style={{height:8,borderRadius:4,background:"#f0f0f0",overflow:"hidden"}}><div style={{height:"100%",width:pct(s.done,s.total)+"%",background:NC_COL.green,borderRadius:4}}/></div>
           {s.blocked>0&&<div style={{fontSize:11,color:NC_COL.red,marginTop:2}}>{s.blocked} bloquée{s.blocked>1?"s":""}</div>}
         </div>
       ))}
     </SCard>
-
-    {/* Planning */}
     <SCard title="Planning par date de pose">
-      {dates.length===0?<Muted>Aucune date renseignée.</Muted>:(
+      {dates.length===0?<Muted>Aucune date.</Muted>:(
         <div style={{overflowX:"auto"}}>
           <table style={{width:"100%",borderCollapse:"collapse",fontSize:12}}>
             <thead><tr style={{background:"#f8f8f8"}}>
@@ -905,7 +789,7 @@ function Dashboard({allZT,batiments,activeStatuses,chantiers,equipes}){
               {Object.entries(STATUSES).map(([k,v])=><th key={k} style={{padding:"5px 5px",color:v.color,fontWeight:500,borderBottom:"1px solid #eee",whiteSpace:"nowrap",fontSize:11}}>{v.label}</th>)}
               <th style={{padding:"5px 8px",color:NC_COL.dark,fontWeight:500,borderBottom:"1px solid #eee"}}>Total</th>
             </tr></thead>
-            <tbody>{dates.map((d,i)=>{const row=byDate[d],tot=Object.values(row).reduce((a,b)=>a+b,0);return(
+            <tbody>{dates.map((d,i)=>{ const row=byDate[d],tot=Object.values(row).reduce((a,b)=>a+b,0); return(
               <tr key={d} style={{background:i%2===0?"#fafafa":"white"}}>
                 <td style={{padding:"5px 8px",color:d<TODAY&&row.todo>0?NC_COL.red:NC_COL.dark,whiteSpace:"nowrap",fontWeight:500}}>{fmtDate(d==="Sans date"?null:d)}</td>
                 {Object.keys(STATUSES).map(k=><td key={k} style={{padding:"5px 5px",textAlign:"center",color:row[k]?STATUSES[k].color:"#ddd"}}>{row[k]||"—"}</td>)}
@@ -917,8 +801,6 @@ function Dashboard({allZT,batiments,activeStatuses,chantiers,equipes}){
         </div>
       )}
     </SCard>
-
-    {/* Équipes */}
     <SCard title="Performance par équipe">
       {Object.keys(byEq).length===0?<Muted>Aucune équipe.</Muted>:Object.entries(byEq).map(([eq,s])=>{
         const eqObj=equipes.find(e=>e.name===eq);
@@ -933,10 +815,8 @@ function Dashboard({allZT,batiments,activeStatuses,chantiers,equipes}){
         </div>;
       })}
     </SCard>
-
-    {/* Bloqués */}
     <SCard title={"Zones bloquées"+(blocked.length>0?" ("+blocked.length+")":"  — aucune")} accent={blocked.length>0?NC_COL.red:NC_COL.gray}>
-      {blocked.length===0?<Muted>Aucune zone bloquée.</Muted>:blocked.map(zt=>(
+      {blocked.length===0?<Muted>Aucune.</Muted>:blocked.map(zt=>(
         <div key={zt.id} style={{padding:"8px 0",borderBottom:"1px solid #f5f5f5"}}>
           <div style={{fontSize:13,fontWeight:500,color:NC_COL.red}}>{zt.label||"—"}{zt.type_blocage?" · "+TYPE_BLOCAGE[zt.type_blocage]:""}</div>
           <div style={{fontSize:12,color:NC_COL.gray}}>{zt.equipe?" Équipe: "+zt.equipe:""}</div>
@@ -971,13 +851,7 @@ function SettingsView({pushToast,onSettingsChange}){
     fetchParametre('statuts_actifs').then(v=>{if(v)setStatutsActifs(v);}).catch(()=>{});
   },[]);
 
-  const saveParam=async(key,value,label)=>{
-    setSaving(true);
-    try{await setParametre(key,value);pushToast(label+" sauvegardés");onSettingsChange&&onSettingsChange(key,value);}
-    catch(err){pushToast("Erreur: "+err.message,"error");}
-    setSaving(false);
-  };
-
+  const saveParam=async(key,value,label)=>{ setSaving(true); try{await setParametre(key,value);pushToast(label+" sauvegardés");onSettingsChange&&onSettingsChange(key,value);}catch(err){pushToast("Erreur: "+err.message,"error");} setSaving(false); };
   const tabs=[{k:"equipes",l:"Équipes"},{k:"pins",l:"Codes PIN"},{k:"statuts",l:"Statuts"},{k:"entreprise",l:"Entreprise"},{k:"utilisateurs",l:"Utilisateurs"},{k:"preferences",l:"Préférences"}];
 
   return <div style={{padding:16,fontFamily:"Arial,sans-serif",maxWidth:780,margin:"0 auto"}}>
@@ -1062,9 +936,9 @@ function SettingsView({pushToast,onSettingsChange}){
         <Field label="Nom complet"><input value={newUser.nom} onChange={e=>setNewUser(p=>({...p,nom:e.target.value}))} placeholder="Jean-Pierre Müller" style={inp}/></Field>
         <Field label="Rôle"><select value={newUser.role} onChange={e=>setNewUser(p=>({...p,role:e.target.value}))} style={sel_style}>{Object.entries(ROLE_LABELS).map(([k,v])=><option key={k} value={k}>{v}</option>)}</select></Field>
         <Field label="Équipe"><select value={newUser.equipe_id} onChange={e=>setNewUser(p=>({...p,equipe_id:e.target.value}))} style={sel_style}><option value="">— Aucune —</option>{equipes.map(eq=><option key={eq.id} value={eq.id}>{eq.name}</option>)}</select></Field>
-        <Field label="PIN personnel" hint="Prioritaire sur le PIN du rôle"><input type="password" value={newUser.pin} onChange={e=>setNewUser(p=>({...p,pin:e.target.value}))} placeholder="••••" maxLength={8} style={inp}/></Field>
+        <Field label="PIN personnel"><input type="password" value={newUser.pin} onChange={e=>setNewUser(p=>({...p,pin:e.target.value}))} placeholder="••••" maxLength={8} style={inp}/></Field>
       </div>
-      <SBtn primary onClick={async()=>{if(!newUser.nom.trim())return;const r=await createUtilisateur({nom:newUser.nom,role:newUser.role,equipe_id:newUser.equipe_id||null,pin:newUser.pin||null,actif:true});const withEq={...r,equipes:equipes.find(e=>e.id===r.equipe_id)||null};setUsers(p=>[...p,withEq]);setNewUser({nom:"",role:"monteur",equipe_id:"",pin:""});pushToast("Créé");}} disabled={saving}>Créer</SBtn>
+      <SBtn primary onClick={async()=>{ if(!newUser.nom.trim())return; const r=await createUtilisateur({nom:newUser.nom,role:newUser.role,equipe_id:newUser.equipe_id||null,pin:newUser.pin||null,actif:true}); const withEq={...r,equipes:equipes.find(e=>e.id===r.equipe_id)||null}; setUsers(p=>[...p,withEq]); setNewUser({nom:"",role:"monteur",equipe_id:"",pin:""}); pushToast("Créé"); }} disabled={saving}>Créer</SBtn>
     </SCard>}
 
     {tab==="preferences"&&<SCard title="Préférences" accent={NC_COL.dark}>
@@ -1101,7 +975,7 @@ function SettingsView({pushToast,onSettingsChange}){
   </div>;
 }
 
-// ── LoginScreen ───────────────────────────────────────────────────────────────
+// ── Login ─────────────────────────────────────────────────────────────────────
 function LoginScreen({onLogin,equipes}){
   const [selRole,setSelRole]=useState(null);
   const [selEquipe,setSelEquipe]=useState("");
@@ -1110,6 +984,7 @@ function LoginScreen({onLogin,equipes}){
   const [pins,setPins]=useState({ca:"1234",chef:"5678",monteur:"9999"});
   useEffect(()=>{ fetchParametre('pins').then(v=>{if(v)setPins(v);}).catch(()=>{}); },[]);
   const tryLogin=()=>{ if(pin===pins[selRole]) onLogin(selRole,selRole==="monteur"?selEquipe:null); else{setErr("Code PIN incorrect.");setPin("");} };
+
   return <div style={{minHeight:"100vh",display:"flex",flexDirection:"column",alignItems:"center",justifyContent:"center",background:"#f4f4f4",padding:16,fontFamily:"Arial,sans-serif"}}>
     <div style={{display:"flex",alignItems:"center",gap:10,marginBottom:36}}>
       <div style={{width:40,height:40,borderRadius:8,background:NC_COL.red,display:"flex",alignItems:"center",justifyContent:"center"}}>
@@ -1209,7 +1084,7 @@ export default function App(){
       const zt=await createZoneTravail(sel.zone,{label:form.label,equipe:form.equipe||currentEquipe||"",rect:form.rect,status:"todo",comment:"",date_pose:null,heures_prevues:0,heures_realisees:0,cout_unitaire:0});
       setAllZT(p=>[...p,zt]);setCurrentZone(prev=>prev?{...prev,zones_travail:[...prev.zones_travail,zt]}:null);
       await addHistory(zt.id,role,"Création",form.label||"");pushToast("Zone créée");
-    } else {
+    }else{
       const payload={label:form.label,equipe:form.equipe,status:form.status,comment:form.comment,date_pose:form.date_pose||null,heures_prevues:parseFloat(form.heures_prevues)||0,heures_realisees:parseFloat(form.heures_realisees)||0,cout_unitaire:parseFloat(form.cout_unitaire)||0,type_blocage:form.type_blocage||null,statut_nappe_h:form.statut_nappe_h||"todo",statut_nappe_b:form.statut_nappe_b||"todo",statut_terminaux:form.statut_terminaux||"todo"};
       const updated=await updateZoneTravail(form.id,payload);
       setAllZT(p=>p.map(x=>x.id===updated.id?updated:x));setCurrentZone(prev=>prev?{...prev,zones_travail:prev.zones_travail.map(x=>x.id===updated.id?updated:x)}:null);
@@ -1223,7 +1098,7 @@ export default function App(){
   const deleteZT=async id=>{
     await deleteZoneTravail(id);
     setAllZT(p=>p.filter(x=>x.id!==id));setCurrentZone(prev=>prev?{...prev,zones_travail:prev.zones_travail.filter(x=>x.id!==id)}:null);
-    pushToast("Zone supprimée");setEditZT(null);
+    pushToast("Supprimée");setEditZT(null);
   };
 
   const addItem=async()=>{
@@ -1275,7 +1150,6 @@ export default function App(){
   const nbtn=active=>({fontSize:12,padding:"5px 11px",borderRadius:5,border:"1px solid "+(active?NC_COL.red:"#ddd"),background:active?NC_COL.red:"white",color:active?"white":NC_COL.dark,cursor:"pointer",fontFamily:"Arial,sans-serif",fontWeight:active?700:400});
 
   return <div style={{minHeight:"100vh",background:"#f4f4f4",fontFamily:"Arial,sans-serif",display:"flex",flexDirection:"column"}}>
-    {/* Header */}
     <div style={{background:"white",borderBottom:"2px solid "+NC_COL.red,padding:"9px 14px",display:"flex",alignItems:"center",justifyContent:"space-between",flexWrap:"wrap",gap:8,position:"sticky",top:0,zIndex:50}}>
       <div style={{display:"flex",alignItems:"center",gap:10}}>
         <div style={{width:28,height:28,borderRadius:6,background:NC_COL.red,display:"flex",alignItems:"center",justifyContent:"center"}}>
@@ -1293,12 +1167,11 @@ export default function App(){
     </div>
 
     {view==="today"    &&<TodayView role={role} chantiers={chantiers} equipes={equipes} currentEquipe={currentEquipe} pushToast={pushToast} onOpenZone={zt=>{if(zt.zone_id){setSel(s=>({...s,zone:zt.zone_id}));setView("plan");}}}/>}
-    {view==="gantt"    &&<GanttView chantiers={chantiers} pushToast={pushToast}/>}
+    {view==="gantt"    &&<GanttView chantiers={chantiers}/>}
     {view==="nc"       &&<NCView chantiers={chantiers} equipes={equipes} pushToast={pushToast}/>}
-    {view==="dashboard"&&<Dashboard allZT={allZT} batiments={batiments} activeStatuses={activeStatuses} chantiers={chantiers} equipes={equipes}/>}
+    {view==="dashboard"&&<Dashboard allZT={allZT} batiments={batiments} activeStatuses={activeStatuses} equipes={equipes}/>}
     {view==="settings" &&<SettingsView pushToast={pushToast} onSettingsChange={(key,val)=>{if(key==="statuts_actifs")setActiveStatuses(val);if(key==="equipes")fetchEquipes().then(setEquipes);}}/>}
 
-    {/* Nav */}
     {view==="nav"&&<div style={{padding:14,flex:1}}>
       <div style={{display:"flex",gap:10,flexWrap:"wrap"}}>
         <NavCol title="Chantiers" items={chantiers} selId={sel.chantier} loading={loading.chantiers} onSel={id=>setSel({chantier:id,batiment:null,niveau:null,zone:null})} canAdd={canEdit} onAdd={()=>setAddingWhat("chantier")} onEdit={item=>handleEdit("chantier",item)} onDelete={item=>handleDelete("chantier",item)}/>
@@ -1309,7 +1182,6 @@ export default function App(){
       {!sel.chantier&&<div style={{fontSize:13,color:NC_COL.gray,marginTop:16}}>Sélectionnez un chantier pour commencer.</div>}
     </div>}
 
-    {/* Plan */}
     {view==="plan"&&currentZone&&<div style={{padding:12,flex:1}}>
       <div style={{display:"flex",alignItems:"center",gap:8,marginBottom:10,flexWrap:"wrap"}}>
         <button onClick={backToNav} style={{fontSize:12,padding:"4px 10px",borderRadius:5,border:"1px solid #ddd",background:"white",color:NC_COL.dark,cursor:"pointer"}}>← Retour</button>
@@ -1321,7 +1193,6 @@ export default function App(){
       <PlanViewer zone={currentZone} role={role} activeStatuses={activeStatuses} equipes={equipes} pushToast={pushToast}
         onZTClick={zt=>setEditZT({...zt,isNew:false,_origStatus:zt.status})}
         onNewZT={rect=>canEdit&&setEditZT({isNew:true,rect,label:"",equipe:currentEquipe||"",status:"todo",comment:""})}/>
-      {/* Légende */}
       <div style={{display:"flex",gap:8,flexWrap:"wrap",marginTop:8}}>
         {Object.entries(Object.fromEntries(Object.entries(ALL_STATUSES).filter(([k])=>activeStatuses.includes(k)))).map(([k,v])=>(
           <div key={k} style={{display:"flex",alignItems:"center",gap:4,fontSize:11,color:NC_COL.gray}}>
@@ -1338,7 +1209,6 @@ export default function App(){
       <button onClick={goToNav} style={{marginTop:12,fontSize:13,padding:"8px 16px",borderRadius:6,border:"1px solid "+NC_COL.red,background:NC_COL.red,color:"white",cursor:"pointer"}}>← Navigation</button>
     </div>}
 
-    {/* Modal ajout structure */}
     {addingWhat&&<Modal title={"Nouveau "+(addingWhat==="chantier"?"chantier":addingWhat==="batiment"?"bâtiment":addingWhat==="niveau"?"niveau":"zone")} onClose={()=>{setAddingWhat(null);setNewName("");}}>
       <input autoFocus value={newName} onChange={e=>setNewName(e.target.value)} onKeyDown={e=>e.key==="Enter"&&addItem()} placeholder="Nom…" style={{...inp,marginBottom:12}}/>
       <div style={{display:"flex",gap:8}}><SBtn primary onClick={addItem} style={{flex:1}} disabled={saving}>{saving?"…":"Créer"}</SBtn><SBtn onClick={()=>{setAddingWhat(null);setNewName("");}} style={{flex:1}}>Annuler</SBtn></div>
